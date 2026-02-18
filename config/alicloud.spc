@@ -20,6 +20,7 @@ connection "alicloud" {
   # Alternatively, you may set static credentials with the `access_key` and `secret_key` arguments.
   # access_key  	= "LTAI4GBVFakeKey09Kxezv66"
   # secret_key  	= "6iNPvThisIsNotARealSecretk1sZF"
+  # session_token = "session-token"
 
   # Disable automatic reconnection (true/false). Defaults to false.
   # auto_retry = false

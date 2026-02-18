@@ -629,8 +629,7 @@ func getEnvForProfile(_ context.Context, d *plugin.QueryData) (profile string) {
 	return profile
 }
 
-func getEnv(_ context.Context, d *plugin.QueryData) (secretKey string, accessKey string, err error) {
-
+func getEnv(_ context.Context, d *plugin.QueryData) (secretKey string, accessKey string, sessionToken string, err error) {
 	// https://github.com/aliyun/aliyun-cli/blob/master/CHANGELOG.md#3040
 	// The CLI order of preference is:
 	// 1. ALIBABACLOUD_ACCESS_KEY_ID / ALIBABACLOUD_ACCESS_KEY_SECRET / ALIBABACLOUD_REGION_ID
@@ -674,7 +673,18 @@ func getEnv(_ context.Context, d *plugin.QueryData) (secretKey string, accessKey
 		}
 	}
 
-	return accessKey, secretKey, nil
+	if alicloudConfig.SessionToken != nil {
+		sessionToken = *alicloudConfig.SessionToken
+	} else {
+		var ok bool
+		if sessionToken, ok = os.LookupEnv("ALIBABACLOUD_ACCESS_KEY_SECRET"); !ok {
+			if sessionToken, ok = os.LookupEnv("ALICLOUD_ACCESS_KEY_SECRET"); !ok {
+				sessionToken, _ = os.LookupEnv("ALICLOUD_SECRET_KEY")
+			}
+		}
+	}
+
+	return accessKey, secretKey, sessionToken, nil
 }
 
 // Credential configuration
@@ -690,7 +700,6 @@ func getProfileConfigurations(_ context.Context, d *plugin.QueryData) (*Credenti
 	profile := alicloudConfig.Profile
 
 	cfg, err := getCredentialConfigByProfile(*profile, d)
-
 	if err != nil {
 		return nil, err
 	}
@@ -726,7 +735,6 @@ func getCredentialConfigByProfile(profile string, d *plugin.QueryData) (*Credent
 var getCredentialSessionCached = plugin.HydrateFunc(getCredentialSessionUncached).Memoize()
 
 func getCredentialSessionUncached(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-
 	var connectionCfg *CredentialConfig
 
 	config := GetConfig(d.Connection)
@@ -754,9 +762,14 @@ func getCredentialSessionUncached(ctx context.Context, d *plugin.QueryData, h *p
 	}
 
 	// Access key and Secret Key from environment variable
-	accessKey, secretKey, err := getEnv(ctx, d)
+	accessKey, secretKey, sessionToken, err := getEnv(ctx, d)
 	if err != nil {
 		return nil, err
+	}
+	if sessionToken != "" && accessKey != "" && secretKey != "" {
+		creds := credentials.NewStsTokenCredential(accessKey, secretKey, sessionToken)
+		connectionCfg = &CredentialConfig{creds, defaultRegion, defaultConfig}
+		return connectionCfg, nil
 	}
 	if accessKey != "" && secretKey != "" {
 		creds := credentials.NewAccessKeyCredential(accessKey, secretKey)

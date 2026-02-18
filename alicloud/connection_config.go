@@ -8,6 +8,7 @@ type alicloudConfig struct {
 	Regions          []string `hcl:"regions,optional"`
 	AccessKey        *string  `hcl:"access_key"`
 	SecretKey        *string  `hcl:"secret_key"`
+	SessionToken     *string  `hcl:"session_token,optional"`
 	IgnoreErrorCodes []string `hcl:"ignore_error_codes,optional"`
 	Profile          *string  `hcl:"profile"`
 	AutoRetry        *bool    `hcl:"auto_retry,optional"`
