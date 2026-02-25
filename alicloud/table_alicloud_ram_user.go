@@ -2,8 +2,10 @@ package alicloud
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	ims "github.com/alibabacloud-go/ims-20190815/v4/client"
 	ram "github.com/alibabacloud-go/ram-20150501/v2/client"
 	"github.com/alibabacloud-go/tea/tea"
 	"github.com/sethvargo/go-retry"
@@ -55,6 +57,11 @@ func tableAlicloudRAMUser(ctx context.Context) *plugin.Table {
 			{
 				Func: getRAMUserGroups,
 				Tags: map[string]string{"service": "ram", "action": "ListGroupsForUser"},
+			},
+			{
+				Func: getRAMUserPasskeys,
+				Tags: map[string]string{"service": "ims", "action": "getRAMUserPasskeys"},
+				Depends: []plugin.HydrateFunc{getRAMUserMfaDevices},
 			},
 		},
 		Columns: []*plugin.Column{
@@ -117,7 +124,7 @@ func tableAlicloudRAMUser(ctx context.Context) *plugin.Table {
 				Name:        "mfa_enabled",
 				Description: "The MFA status of the user",
 				Type:        proto.ColumnType_BOOL,
-				Hydrate:     getRAMUserMfaDevices,
+				Hydrate:     getRAMUserPasskeys,
 				Transform:   transform.From(userMfaStatus),
 			},
 			{
@@ -153,6 +160,13 @@ func tableAlicloudRAMUser(ctx context.Context) *plugin.Table {
 				Description: "The list of MFA devices.",
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     getRAMUserMfaDevices,
+				Transform:   transform.FromValue(),
+			},
+			{
+				Name:        "passkeys",
+				Description: "The list of passkeys for the user.",
+				Type:        proto.ColumnType_JSON,
+				Hydrate:     getRAMUserPasskeys,
 				Transform:   transform.FromValue(),
 			},
 
@@ -389,6 +403,40 @@ func getRAMUserMfaDevices(ctx context.Context, d *plugin.QueryData, h *plugin.Hy
 	return items, nil
 }
 
+func getRAMUserPasskeys(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
+	plugin.Logger(ctx).Trace("getRAMUserPasskeys")
+	data := h.Item.(userInfo)
+
+	// Get project details
+	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()
+	commonData, err := getCommonColumnsCached(ctx, d, h)
+	if err != nil {
+		return nil, err
+	}
+	commonColumnData := commonData.(*alicloudCommonColumnData)
+	accountID := commonColumnData.AccountID
+
+	// Create service connection
+	client, err := IMSService(ctx, d)
+	if err != nil {
+		plugin.Logger(ctx).Error("alicloud_ram_user.getRAMUserPasskeys", "connection_error", err)
+		return nil, err
+	}
+
+	response, err := client.ListPasskeys(&ims.ListPasskeysRequest{
+		UserPrincipalName: tea.String(fmt.Sprintf("%s@%s.onaliyun.com", data.UserName, accountID)),
+	})
+	if err != nil {
+		if serverErr, ok := err.(*tea.SDKError); ok {
+			logQueryError(ctx, d, h, "alicloud_ram_user.getRAMUserPasskeys", serverErr)
+			return nil, serverErr
+		}
+		return nil, err
+	}
+
+	return response.Body.Passkeys, nil
+}
+
 func getUserArn(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getUserAkas")
 	data := h.Item.(userInfo)
@@ -429,9 +477,10 @@ func getCsUserPermissions(ctx context.Context, d *plugin.QueryData, h *plugin.Hy
 //// TRANSFORM FUNCTION
 
 func userMfaStatus(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	data := d.HydrateItem.([]*ram.ListVirtualMFADevicesResponseBodyVirtualMFADevicesVirtualMFADevice)
+	passkeys := d.HydrateResults["getRAMUserPasskeys"].([]*ims.ListPasskeysResponseBodyPasskeys)
+	mfaDevices := d.HydrateResults["getRAMUserMfaDevices"].([]*ram.ListVirtualMFADevicesResponseBodyVirtualMFADevicesVirtualMFADevice)
 
-	if len(data) > 0 {
+	if len(passkeys) > 0 || len(mfaDevices) > 0 {
 		return true, nil
 	}
 
