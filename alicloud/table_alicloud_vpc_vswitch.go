@@ -4,8 +4,8 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/vpc"
+	"github.com/alibabacloud-go/tea/tea"
+	vpc "github.com/alibabacloud-go/vpc-20160428/v7/client"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -133,7 +133,7 @@ func tableAlicloudVpcVSwitch(ctx context.Context) *plugin.Table {
 			{
 				Name:        "tags",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(vpcTurbotTags),
+				Transform:   transform.FromField("Tags.Tag").Transform(modifyGenericSourceTags),
 				Description: ColumnDescriptionTags,
 			},
 			{
@@ -168,24 +168,25 @@ func tableAlicloudVpcVSwitch(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listVSwitch(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listVSwitch(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := VpcService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("listVSwitch", "connection_error", err)
 		return nil, err
 	}
-	request := vpc.CreateDescribeVSwitchesRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &vpc.DescribeVSwitchesRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	quals := d.EqualsQuals
 	if quals["is_default"] != nil {
-		request.IsDefault = requests.NewBoolean(quals["is_default"].GetBoolValue())
+		request.IsDefault = tea.Bool(quals["is_default"].GetBoolValue())
 	}
 	if quals["vswitch_id"] != nil {
-		request.VSwitchId = quals["vswitch_id"].GetStringValue()
+		request.VSwitchId = tea.String(quals["vswitch_id"].GetStringValue())
 	}
 
 	count := 0
@@ -193,12 +194,12 @@ func listVSwitch(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeVSwitches(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("listVSwitch", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "listVSwitch", err, "request", request)
 			return nil, err
 		}
-		for _, i := range response.VSwitches.VSwitch {
+		for _, i := range response.Body.VSwitches.VSwitch {
 			plugin.Logger(ctx).Warn("listVSwitch", "tags", i.Tags, "item", i)
-			d.StreamListItem(ctx, i)
+			d.StreamListItem(ctx, *i)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -206,10 +207,10 @@ func listVSwitch(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData
 			}
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(tea.Int32Value(response.Body.TotalCount)) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(tea.Int32Value(response.Body.PageNumber) + 1)
 	}
 	return nil, nil
 }
@@ -223,32 +224,32 @@ func getVSwitchAttributes(ctx context.Context, d *plugin.QueryData, h *plugin.Hy
 		plugin.Logger(ctx).Error("getVSwitchAttributes", "connection_error", err)
 		return nil, err
 	}
-	request := vpc.CreateDescribeVSwitchAttributesRequest()
-	request.Scheme = "https"
-	i := h.Item.(vpc.VSwitch)
-	request.VSwitchId = i.VSwitchId
+	i := h.Item.(vpc.DescribeVSwitchesResponseBodyVSwitchesVSwitch)
+	request := &vpc.DescribeVSwitchAttributesRequest{
+		VSwitchId: i.VSwitchId,
+	}
 	response, err := client.DescribeVSwitchAttributes(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("getVSwitchAttributes", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "getVSwitchAttributes", err, "request", request)
 		return nil, err
 	}
-	return response, nil
+	return *response.Body, nil
 }
 
 //// TRANSFORM FUNCTIONS
 
 func vswitchAkas(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	i := d.HydrateItem.(vpc.VSwitch)
-	return []string{"acs:vswitch:" + i.ZoneId + ":" + strconv.FormatInt(i.OwnerId, 10) + ":vswitch/" + i.VSwitchId}, nil
+	i := d.HydrateItem.(vpc.DescribeVSwitchesResponseBodyVSwitchesVSwitch)
+	return []string{"acs:vswitch:" + tea.StringValue(i.ZoneId) + ":" + strconv.FormatInt(tea.Int64Value(i.OwnerId), 10) + ":vswitch/" + tea.StringValue(i.VSwitchId)}, nil
 }
 
 func vswitchTitle(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	i := d.HydrateItem.(vpc.VSwitch)
+	i := d.HydrateItem.(vpc.DescribeVSwitchesResponseBodyVSwitchesVSwitch)
 
 	// Build resource title
-	title := i.VSwitchId
-	if len(i.VSwitchName) > 0 {
-		title = i.VSwitchName
+	title := tea.StringValue(i.VSwitchId)
+	if len(tea.StringValue(i.VSwitchName)) > 0 {
+		title = tea.StringValue(i.VSwitchName)
 	}
 
 	return title, nil

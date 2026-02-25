@@ -3,8 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/vpc"
+	"github.com/alibabacloud-go/tea/tea"
+	vpc "github.com/alibabacloud-go/vpc-20160428/v7/client"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -96,28 +96,29 @@ func tableAlicloudVpcVpnCustomerGateway(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listVpcCustomerGateways(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listVpcCustomerGateways(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := VpcService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_vpc_vpn_customer_gateway.listVpcCustomerGateways", "connection_error", err)
 		return nil, err
 	}
-	request := vpc.CreateDescribeCustomerGatewaysRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &vpc.DescribeCustomerGatewaysRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	count := 0
 	for {
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeCustomerGateways(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_vpc_vpn_customer_gateway.listVpcCustomerGateways", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_vpc_vpn_customer_gateway.listVpcCustomerGateways", err, "request", request)
 			return nil, err
 		}
-		for _, i := range response.CustomerGateways.CustomerGateway {
-			d.StreamListItem(ctx, i)
+		for _, i := range response.Body.CustomerGateways.CustomerGateway {
+			d.StreamListItem(ctx, *i)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -125,17 +126,17 @@ func listVpcCustomerGateways(ctx context.Context, d *plugin.QueryData, _ *plugin
 			}
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(tea.Int32Value(response.Body.TotalCount)) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(tea.Int32Value(response.Body.PageNumber) + 1)
 	}
 	return nil, nil
 }
 
 //// HYDRATE FUNCTIONS
 
-func getVpcCustomerGateway(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func getVpcCustomerGateway(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := VpcService(ctx, d)
 	if err != nil {
@@ -144,18 +145,18 @@ func getVpcCustomerGateway(ctx context.Context, d *plugin.QueryData, _ *plugin.H
 	}
 	id := d.EqualsQuals["customer_gateway_id"].GetStringValue()
 
-	request := vpc.CreateDescribeCustomerGatewaysRequest()
-	request.Scheme = "https"
-	request.CustomerGatewayId = id
+	request := &vpc.DescribeCustomerGatewaysRequest{
+		CustomerGatewayId: &id,
+	}
 
 	response, err := client.DescribeCustomerGateways(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_vpc_vpn_customer_gateway.getVpcCustomerGateway", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_vpc_vpn_customer_gateway.getVpcCustomerGateway", err, "request", request)
 		return nil, err
 	}
 
-	if len(response.CustomerGateways.CustomerGateway) > 0 {
-		return response.CustomerGateways.CustomerGateway[0], nil
+	if len(response.Body.CustomerGateways.CustomerGateway) > 0 {
+		return *response.Body.CustomerGateways.CustomerGateway[0], nil
 	}
 
 	return nil, nil
@@ -163,7 +164,7 @@ func getVpcCustomerGateway(ctx context.Context, d *plugin.QueryData, _ *plugin.H
 
 func getVpcCustomerGatewayAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getVpcCustomerGatewayAka")
-	data := h.Item.(vpc.CustomerGateway)
+	data := h.Item.(vpc.DescribeCustomerGatewaysResponseBodyCustomerGatewaysCustomerGateway)
 	region := d.EqualsQualString(matrixKeyRegion)
 
 	// Get project details
@@ -175,7 +176,7 @@ func getVpcCustomerGatewayAka(ctx context.Context, d *plugin.QueryData, h *plugi
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	akas := []string{"acs:vpc:" + region + ":" + accountID + ":customergateway/" + data.CustomerGatewayId}
+	akas := []string{"acs:vpc:" + region + ":" + accountID + ":customergateway/" + tea.StringValue(data.CustomerGatewayId)}
 
 	return akas, nil
 }
@@ -190,13 +191,13 @@ func getVpnCustomerGatewayRegion(ctx context.Context, d *plugin.QueryData, h *pl
 //// TRANSFORM FUNCTIONS
 
 func vpcCustomerGatewayTitle(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	data := d.HydrateItem.(vpc.CustomerGateway)
+	data := d.HydrateItem.(vpc.DescribeCustomerGatewaysResponseBodyCustomerGatewaysCustomerGateway)
 
 	// Build resource title
-	title := data.CustomerGatewayId
+	title := tea.StringValue(data.CustomerGatewayId)
 
-	if len(data.Name) > 0 {
-		title = data.Name
+	if len(tea.StringValue(data.Name)) > 0 {
+		title = tea.StringValue(data.Name)
 	}
 
 	return title, nil

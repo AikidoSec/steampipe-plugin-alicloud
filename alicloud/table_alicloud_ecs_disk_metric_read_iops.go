@@ -3,7 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
+	ecs "github.com/alibabacloud-go/ecs-20140526/v7/client"
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
@@ -33,6 +34,6 @@ func tableAlicloudEcsDiskMetricReadIops(_ context.Context) *plugin.Table {
 }
 
 func listEcsDisksMetricReadIops(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	data := h.Item.(ecs.Instance)
-	return listCMMetricStatistics(ctx, d, "5_MIN", "acs_ecs_dashboard", "DiskReadIOPS", "instanceId", data.InstanceId)
+	data := h.Item.(ecs.DescribeInstancesResponseBodyInstancesInstance)
+	return listCMMetricStatistics(ctx, d, "5_MIN", "acs_ecs_dashboard", "DiskReadIOPS", "instanceId", tea.StringValue(data.InstanceId))
 }

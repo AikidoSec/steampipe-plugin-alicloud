@@ -3,9 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
+	ecs "github.com/alibabacloud-go/ecs-20140526/v7/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -170,27 +169,28 @@ func tableAlicloudEcsAutoProvisioningGroup(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listEcsAutosProvisioningGroups(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listEcsAutosProvisioningGroups(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := ECSService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_ecs_auto_provisioning_group.listEcsAutosProvisioningGroups", "connection_error", err)
 		return nil, err
 	}
-	request := ecs.CreateDescribeAutoProvisioningGroupsRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &ecs.DescribeAutoProvisioningGroupsRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	count := 0
 	for {
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeAutoProvisioningGroups(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_auto_provisioning_group.listEcsAutosProvisioningGroups", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_ecs_auto_provisioning_group.listEcsAutosProvisioningGroups", err, "request", request)
 			return nil, err
 		}
-		for _, group := range response.AutoProvisioningGroups.AutoProvisioningGroup {
+		for _, group := range response.Body.AutoProvisioningGroups.AutoProvisioningGroup {
 			d.StreamListItem(ctx, group)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
@@ -199,10 +199,10 @@ func listEcsAutosProvisioningGroups(ctx context.Context, d *plugin.QueryData, _ 
 			}
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(*response.Body.TotalCount) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(*response.Body.PageNumber + 1)
 	}
 	return nil, nil
 }
@@ -220,18 +220,21 @@ func getEcsAutosProvisioningGroup(ctx context.Context, d *plugin.QueryData, h *p
 	}
 	id := d.EqualsQuals["auto_provisioning_group_id"].GetStringValue()
 
-	request := ecs.CreateDescribeAutoProvisioningGroupsRequest()
-	request.Scheme = "https"
-	request.AutoProvisioningGroupId = &[]string{id}
-
-	response, err := client.DescribeAutoProvisioningGroups(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ecs_auto_provisioning_group.getEcsAutosProvisioningGroup", "query_error", serverErr, "request", request)
-		return nil, serverErr
+	request := &ecs.DescribeAutoProvisioningGroupsRequest{
+		AutoProvisioningGroupId: []*string{&id},
 	}
 
-	if len(response.AutoProvisioningGroups.AutoProvisioningGroup) > 0 {
-		return response.AutoProvisioningGroups.AutoProvisioningGroup[0], nil
+	response, err := client.DescribeAutoProvisioningGroups(request)
+	if err != nil {
+		if serverErr, ok := err.(*tea.SDKError); ok {
+			logQueryError(ctx, d, h, "alicloud_ecs_auto_provisioning_group.getEcsAutosProvisioningGroup", serverErr, "request", request)
+			return nil, serverErr
+		}
+		return nil, err
+	}
+
+	if len(response.Body.AutoProvisioningGroups.AutoProvisioningGroup) > 0 {
+		return response.Body.AutoProvisioningGroups.AutoProvisioningGroup[0], nil
 	}
 
 	return nil, nil
@@ -239,7 +242,7 @@ func getEcsAutosProvisioningGroup(ctx context.Context, d *plugin.QueryData, h *p
 
 func getEcsAutosProvisioningGroupInstances(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsAutosProvisioningGroupInstances")
-	data := h.Item.(ecs.AutoProvisioningGroup)
+	data := h.Item.(*ecs.DescribeAutoProvisioningGroupsResponseBodyAutoProvisioningGroupsAutoProvisioningGroup)
 
 	// Create service connection
 	client, err := ECSService(ctx, d)
@@ -248,22 +251,25 @@ func getEcsAutosProvisioningGroupInstances(ctx context.Context, d *plugin.QueryD
 		return nil, err
 	}
 
-	request := ecs.CreateDescribeAutoProvisioningGroupInstancesRequest()
-	request.Scheme = "https"
-	request.AutoProvisioningGroupId = data.AutoProvisioningGroupId
-
-	response, err := client.DescribeAutoProvisioningGroupInstances(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ecs_auto_provisioning_group.getEcsAutosProvisioningGroupInstances", "query_error", serverErr, "request", request)
-		return nil, serverErr
+	request := &ecs.DescribeAutoProvisioningGroupInstancesRequest{
+		AutoProvisioningGroupId: data.AutoProvisioningGroupId,
 	}
 
-	return response, nil
+	response, err := client.DescribeAutoProvisioningGroupInstances(request)
+	if err != nil {
+		if serverErr, ok := err.(*tea.SDKError); ok {
+			logQueryError(ctx, d, h, "alicloud_ecs_auto_provisioning_group.getEcsAutosProvisioningGroupInstances", serverErr, "request", request)
+			return nil, serverErr
+		}
+		return nil, err
+	}
+
+	return response.Body, nil
 }
 
 func getEcsAutosProvisioningGroupAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsAutosProvisioningGroupAka")
-	data := h.Item.(ecs.AutoProvisioningGroup)
+	data := h.Item.(*ecs.DescribeAutoProvisioningGroupsResponseBodyAutoProvisioningGroupsAutoProvisioningGroup)
 
 	// Get project details
 	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()
@@ -274,7 +280,7 @@ func getEcsAutosProvisioningGroupAka(ctx context.Context, d *plugin.QueryData, h
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	akas := []string{"acs:ecs:" + data.RegionId + ":" + accountID + ":auto-provisioning-group/" + data.AutoProvisioningGroupId}
+	akas := []string{"acs:ecs:" + tea.StringValue(data.RegionId) + ":" + accountID + ":auto-provisioning-group/" + tea.StringValue(data.AutoProvisioningGroupId)}
 
 	return akas, nil
 }
@@ -282,13 +288,13 @@ func getEcsAutosProvisioningGroupAka(ctx context.Context, d *plugin.QueryData, h
 //// TRANSFORM FUNCTIONS
 
 func ecsAutosProvisioningGroupTitle(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	data := d.HydrateItem.(ecs.AutoProvisioningGroup)
+	data := d.HydrateItem.(*ecs.DescribeAutoProvisioningGroupsResponseBodyAutoProvisioningGroupsAutoProvisioningGroup)
 
 	// Build resource title
-	title := data.AutoProvisioningGroupId
+	title := tea.StringValue(data.AutoProvisioningGroupId)
 
-	if len(data.AutoProvisioningGroupName) > 0 {
-		title = data.AutoProvisioningGroupName
+	if len(tea.StringValue(data.AutoProvisioningGroupName)) > 0 {
+		title = tea.StringValue(data.AutoProvisioningGroupName)
 	}
 
 	return title, nil

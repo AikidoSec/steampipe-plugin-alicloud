@@ -3,7 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ram"
+	ram "github.com/alibabacloud-go/ram-20150501/v2/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -95,18 +96,18 @@ func listRAMUserAccessKeys(ctx context.Context, d *plugin.QueryData, h *plugin.H
 
 	user := h.Item.(userInfo)
 
-	request := ram.CreateListAccessKeysRequest()
-	request.Scheme = "https"
-	request.UserName = user.UserName
+	request := &ram.ListAccessKeysRequest{
+		UserName: &user.UserName,
+	}
 
 	response, err := client.ListAccessKeys(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_ram_access_key.listRAMUserAccessKeys", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_ram_access_key.listRAMUserAccessKeys", err, "request", request)
 		return nil, err
 	}
-	for _, i := range response.AccessKeys.AccessKey {
+	for _, i := range response.Body.AccessKeys.AccessKey {
 		plugin.Logger(ctx).Warn("listRAMUserAccessKeys", "item", i)
-		d.StreamLeafListItem(ctx, accessKeyRow{i.AccessKeyId, i.Status, i.CreateDate, user.UserName})
+		d.StreamLeafListItem(ctx, accessKeyRow{tea.StringValue(i.AccessKeyId), tea.StringValue(i.Status), tea.StringValue(i.CreateDate), user.UserName})
 		// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 		// if there is a limit, it will return the number of rows required to reach this limit
 		if d.RowsRemaining(ctx) == 0 {

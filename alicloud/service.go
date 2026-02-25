@@ -4,25 +4,28 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/actiontrail"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/alidns"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/cas"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/cms"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/cs"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ess"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/kms"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ram"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/rds"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/sas"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/slb"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/sts"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/vpc"
+	openapi "github.com/alibabacloud-go/darabonba-openapi/v2/utils"
+	"github.com/alibabacloud-go/tea/dara"
+
+	actiontrail "github.com/alibabacloud-go/actiontrail-20200706/v3/client"
+	alidns "github.com/alibabacloud-go/alidns-20150109/v5/client"
+	cas "github.com/alibabacloud-go/cas-20200407/v4/client"
+	cms "github.com/alibabacloud-go/cms-20190101/v10/client"
+	cs "github.com/alibabacloud-go/cs-20151215/v7/client"
+	ecs "github.com/alibabacloud-go/ecs-20140526/v7/client"
+	ess "github.com/alibabacloud-go/ess-20220222/v2/client"
+	ims "github.com/alibabacloud-go/ims-20190815/v4/client"
+	kms "github.com/alibabacloud-go/kms-20160120/v3/client"
+	ram "github.com/alibabacloud-go/ram-20150501/v2/client"
+	rds "github.com/alibabacloud-go/rds-20140815/v16/client"
+	sas "github.com/alibabacloud-go/sas-20181203/v8/client"
+	slb "github.com/alibabacloud-go/slb-20140515/v4/client"
+	sts "github.com/alibabacloud-go/sts-20150401/v2/client"
+	vpc "github.com/alibabacloud-go/vpc-20160428/v7/client"
+
+	credential "github.com/aliyun/credentials-go/credentials"
+	credentialProviders "github.com/aliyun/credentials-go/credentials/providers"
 
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
 	ossCred "github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
@@ -30,6 +33,20 @@ import (
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 )
+
+// Credential configuration
+type CredentialConfig struct {
+	Cred          credential.Credential
+	DefaultRegion string
+}
+
+// newOpenAPIConfig creates an OpenAPI config for the given region using the credential
+func newOpenAPIConfig(cred credential.Credential, region string) *openapi.Config {
+	return &openapi.Config{
+		Credential: cred,
+		RegionId:   dara.String(region),
+	}
+}
 
 // AliDNSService returns the service connection for Alicloud DNS service
 func AliDNSService(ctx context.Context, d *plugin.QueryData) (*alidns.Client, error) {
@@ -39,7 +56,6 @@ func AliDNSService(ctx context.Context, d *plugin.QueryData) (*alidns.Client, er
 		return nil, fmt.Errorf("region must be passed AliDNSService")
 	}
 
-	// have we already created and cached the service?
 	serviceCacheKey := fmt.Sprintf("alidns-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*alidns.Client), nil
@@ -51,15 +67,12 @@ func AliDNSService(ctx context.Context, d *plugin.QueryData) (*alidns.Client, er
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// so it was not in cache - create service
-	svc, err := alidns.NewClientWithOptions(region, cfg.Config, cfg.Creds)
+	svc, err := alidns.NewClient(newOpenAPIConfig(cfg.Cred, region))
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
-
 	return svc, nil
 }
 
@@ -70,7 +83,6 @@ func AutoscalingService(ctx context.Context, d *plugin.QueryData) (*ess.Client, 
 	if region == "" {
 		return nil, fmt.Errorf("region must be passed AutoscalingService")
 	}
-	// have we already created and cached the service?
 	serviceCacheKey := fmt.Sprintf("ess-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*ess.Client), nil
@@ -82,15 +94,12 @@ func AutoscalingService(ctx context.Context, d *plugin.QueryData) (*ess.Client, 
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// so it was not in cache - create service
-	svc, err := ess.NewClientWithOptions(region, cfg.Config, cfg.Creds)
+	svc, err := ess.NewClient(newOpenAPIConfig(cfg.Cred, region))
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
-
 	return svc, nil
 }
 
@@ -99,7 +108,6 @@ func CasService(ctx context.Context, d *plugin.QueryData, region string) (*cas.C
 	if region == "" {
 		return nil, fmt.Errorf("region must be passed CasService")
 	}
-	// have we already created and cached the service?
 	serviceCacheKey := fmt.Sprintf("cas-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*cas.Client), nil
@@ -111,15 +119,12 @@ func CasService(ctx context.Context, d *plugin.QueryData, region string) (*cas.C
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// so it was not in cache - create service
-	svc, err := cas.NewClientWithOptions(region, cfg.Config, cfg.Creds)
+	svc, err := cas.NewClient(newOpenAPIConfig(cfg.Cred, region))
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
-
 	return svc, nil
 }
 
@@ -130,7 +135,6 @@ func CmsService(ctx context.Context, d *plugin.QueryData) (*cms.Client, error) {
 	if region == "" {
 		return nil, fmt.Errorf("region must be passed CmsService")
 	}
-	// have we already created and cached the service?
 	serviceCacheKey := fmt.Sprintf("cms-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*cms.Client), nil
@@ -142,15 +146,12 @@ func CmsService(ctx context.Context, d *plugin.QueryData) (*cms.Client, error) {
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// so it was not in cache - create service
-	svc, err := cms.NewClientWithOptions(region, cfg.Config, cfg.Creds)
+	svc, err := cms.NewClient(newOpenAPIConfig(cfg.Cred, region))
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
-
 	return svc, nil
 }
 
@@ -161,7 +162,6 @@ func ECSService(ctx context.Context, d *plugin.QueryData) (*ecs.Client, error) {
 	if region == "" {
 		return nil, fmt.Errorf("region must be passed ECSService")
 	}
-	// have we already created and cached the service?
 	serviceCacheKey := fmt.Sprintf("ecs-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*ecs.Client), nil
@@ -173,15 +173,12 @@ func ECSService(ctx context.Context, d *plugin.QueryData) (*ecs.Client, error) {
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// so it was not in cache - create service
-	svc, err := ecs.NewClientWithOptions(region, cfg.Config, cfg.Creds)
+	svc, err := ecs.NewClient(newOpenAPIConfig(cfg.Cred, region))
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
-
 	return svc, nil
 }
 
@@ -190,7 +187,6 @@ func ECSRegionService(ctx context.Context, d *plugin.QueryData, region string) (
 	if region == "" {
 		return nil, fmt.Errorf("region must be passed ECSRegionService")
 	}
-	// have we already created and cached the service?
 	serviceCacheKey := fmt.Sprintf("ecsregion-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*ecs.Client), nil
@@ -202,15 +198,12 @@ func ECSRegionService(ctx context.Context, d *plugin.QueryData, region string) (
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// so it was not in cache - create service
-	svc, err := ecs.NewClientWithOptions(region, cfg.Config, cfg.Creds)
+	svc, err := ecs.NewClient(newOpenAPIConfig(cfg.Cred, region))
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
-
 	return svc, nil
 }
 
@@ -221,7 +214,6 @@ func KMSService(ctx context.Context, d *plugin.QueryData) (*kms.Client, error) {
 	if region == "" {
 		return nil, fmt.Errorf("region must be passed KMSService")
 	}
-	// have we already created and cached the service?
 	serviceCacheKey := fmt.Sprintf("kms-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*kms.Client), nil
@@ -233,15 +225,12 @@ func KMSService(ctx context.Context, d *plugin.QueryData) (*kms.Client, error) {
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// so it was not in cache - create service
-	svc, err := kms.NewClientWithOptions(region, cfg.Config, cfg.Creds)
+	svc, err := kms.NewClient(newOpenAPIConfig(cfg.Cred, region))
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
-
 	return svc, nil
 }
 
@@ -249,7 +238,6 @@ func KMSService(ctx context.Context, d *plugin.QueryData) (*kms.Client, error) {
 func RAMService(ctx context.Context, d *plugin.QueryData) (*ram.Client, error) {
 	region := GetDefaultRegion(d.Connection)
 
-	// have we already created and cached the service?
 	serviceCacheKey := fmt.Sprintf("ram-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*ram.Client), nil
@@ -261,15 +249,35 @@ func RAMService(ctx context.Context, d *plugin.QueryData) (*ram.Client, error) {
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// so it was not in cache - create service
-	svc, err := ram.NewClientWithOptions(region, cfg.Config, cfg.Creds)
+	svc, err := ram.NewClient(newOpenAPIConfig(cfg.Cred, region))
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
+	return svc, nil
+}
 
+func IMSService(ctx context.Context, d *plugin.QueryData) (*ims.Client, error) {
+	region := GetDefaultRegion(d.Connection)
+
+	serviceCacheKey := fmt.Sprintf("ims-%s", region)
+	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
+		return cachedData.(*ims.Client), nil
+	}
+
+	credCfg, err := getCredentialSessionCached(ctx, d, nil)
+	if err != nil {
+		return nil, err
+	}
+	cfg := credCfg.(*CredentialConfig)
+
+	svc, err := ims.NewClient(newOpenAPIConfig(cfg.Cred, region))
+	if err != nil {
+		return nil, err
+	}
+
+	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
 	return svc, nil
 }
 
@@ -277,7 +285,6 @@ func RAMService(ctx context.Context, d *plugin.QueryData) (*ram.Client, error) {
 func SLBService(ctx context.Context, d *plugin.QueryData) (*slb.Client, error) {
 	region := GetDefaultRegion(d.Connection)
 
-	// have we already created and cached the service?
 	serviceCacheKey := fmt.Sprintf("slb-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*slb.Client), nil
@@ -289,22 +296,18 @@ func SLBService(ctx context.Context, d *plugin.QueryData) (*slb.Client, error) {
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// so it was not in cache - create service
-	svc, err := slb.NewClientWithOptions(region, cfg.Config, cfg.Creds)
+	svc, err := slb.NewClient(newOpenAPIConfig(cfg.Cred, region))
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
-
 	return svc, nil
 }
 
 // StsService returns the service connection for Alicloud STS service
 func StsService(ctx context.Context, d *plugin.QueryData) (*sts.Client, error) {
 	region := GetDefaultRegion(d.Connection)
-	// have we already created and cached the service?
 	serviceCacheKey := fmt.Sprintf("sts-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*sts.Client), nil
@@ -316,15 +319,12 @@ func StsService(ctx context.Context, d *plugin.QueryData) (*sts.Client, error) {
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// so it was not in cache - create service
-	svc, err := sts.NewClientWithOptions(region, cfg.Config, cfg.Creds)
+	svc, err := sts.NewClient(newOpenAPIConfig(cfg.Cred, region))
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
-
 	return svc, nil
 }
 
@@ -332,10 +332,15 @@ func StsService(ctx context.Context, d *plugin.QueryData) (*sts.Client, error) {
 func VpcService(ctx context.Context, d *plugin.QueryData) (*vpc.Client, error) {
 	region := d.EqualsQualString(matrixKeyRegion)
 
+	// Fallback to the default region in connection config
 	if region == "" {
-		return nil, fmt.Errorf("region must be passed VpcService")
+		region = GetDefaultRegion(d.Connection)
 	}
-	// have we already created and cached the service?
+
+	if region == "" {
+		return nil, fmt.Errorf("region could not be determined for VpcService")
+	}
+
 	serviceCacheKey := fmt.Sprintf("vpc-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*vpc.Client), nil
@@ -347,41 +352,33 @@ func VpcService(ctx context.Context, d *plugin.QueryData) (*vpc.Client, error) {
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// so it was not in cache - create service
-	svc, err := vpc.NewClientWithOptions(region, cfg.Config, cfg.Creds)
+	svc, err := vpc.NewClient(newOpenAPIConfig(cfg.Cred, region))
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
-
 	return svc, nil
 }
 
 // OssService returns the service connection for Alicloud OSS service
 func OssService(ctx context.Context, d *plugin.QueryData, region string) (*oss.Client, error) {
-	// Validate the region parameter before proceeding
 	if region == "" {
 		return nil, fmt.Errorf("region must be provided to initialize the OSS service")
 	}
 
-	// Check if the OSS client is already cached to avoid redundant initialization
 	serviceCacheKey := fmt.Sprintf("oss-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*oss.Client), nil
 	}
 
-	// Construct the OSS endpoint for the given region
 	endpoint := "oss-" + region + ".aliyuncs.com"
 
-	// Initialize OSS client configuration
 	ossCfg := oss.NewConfig()
 	ossCfg.WithEndpoint(endpoint)
 	ossCfg.WithRegion(region)
 	ossCfg.WithProxyFromEnvironment(true)
 
-	// Retrieve cached credentials for authentication
 	credCfg, err := getCredentialSessionCached(ctx, d, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve cached credentials: %v", err)
@@ -389,26 +386,28 @@ func OssService(ctx context.Context, d *plugin.QueryData, region string) (*oss.C
 
 	cfg := credCfg.(*CredentialConfig)
 
-	// Convert the credential configuration to an OSS-compatible provider
-	credentialProvider, err := auth.ToCredentialsProvider(cfg.Creds)
+	// Extract credentials from the v2 credential interface
+	accessKeyID, err := cfg.Cred.GetAccessKeyId()
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert credentials to a provider: %v", err)
+		return nil, fmt.Errorf("failed to get access key id: %v", err)
+	}
+	accessKeySecret, err := cfg.Cred.GetAccessKeySecret()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get access key secret: %v", err)
+	}
+	securityToken, err := cfg.Cred.GetSecurityToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get security token: %v", err)
 	}
 
-	// Retrieve credentials from the provider
-	profileCred, err := credentialProvider.GetCredentials()
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve credentials from the provider: %v", err)
-	}
+	ossCfg.CredentialsProvider = ossCred.NewStaticCredentialsProvider(
+		dara.StringValue(accessKeyID),
+		dara.StringValue(accessKeySecret),
+		dara.StringValue(securityToken),
+	)
 
-	ossCfg.CredentialsProvider = ossCred.NewStaticCredentialsProvider(profileCred.AccessKeyId, profileCred.AccessKeySecret, profileCred.SecurityToken)
-
-	// Initialize and return the OSS client
 	svc := oss.NewClient(ossCfg)
-
-	// Cache the service connection to optimize future requests
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
-
 	return svc, nil
 }
 
@@ -419,7 +418,6 @@ func ActionTrailService(ctx context.Context, d *plugin.QueryData) (*actiontrail.
 	if region == "" {
 		return nil, fmt.Errorf("region must be passed ActionTrailService")
 	}
-	// have we already created and cached the service?
 	serviceCacheKey := fmt.Sprintf("actiontrail-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*actiontrail.Client), nil
@@ -431,15 +429,12 @@ func ActionTrailService(ctx context.Context, d *plugin.QueryData) (*actiontrail.
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// so it was not in cache - create service
-	svc, err := actiontrail.NewClientWithOptions(region, cfg.Config, cfg.Creds)
+	svc, err := actiontrail.NewClient(newOpenAPIConfig(cfg.Cred, region))
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
-
 	return svc, nil
 }
 
@@ -450,7 +445,6 @@ func ContainerService(ctx context.Context, d *plugin.QueryData) (*cs.Client, err
 	if region == "" {
 		return nil, fmt.Errorf("region must be passed ContainerService")
 	}
-	// have we already created and cached the service?
 	serviceCacheKey := fmt.Sprintf("cs-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*cs.Client), nil
@@ -462,15 +456,12 @@ func ContainerService(ctx context.Context, d *plugin.QueryData) (*cs.Client, err
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// so it was not in cache - create service
-	svc, err := cs.NewClientWithOptions(region, cfg.Config, cfg.Creds)
+	svc, err := cs.NewClient(newOpenAPIConfig(cfg.Cred, region))
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
-
 	return svc, nil
 }
 
@@ -480,7 +471,6 @@ func SecurityCenterService(ctx context.Context, d *plugin.QueryData, region stri
 		return nil, fmt.Errorf("region must be passed SecurityCenterService")
 	}
 
-	// have we already created and cached the service?
 	serviceCacheKey := fmt.Sprintf("sas-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*sas.Client), nil
@@ -492,15 +482,12 @@ func SecurityCenterService(ctx context.Context, d *plugin.QueryData, region stri
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// so it was not in cache - create service
-	svc, err := sas.NewClientWithOptions(region, cfg.Config, cfg.Creds)
+	svc, err := sas.NewClient(newOpenAPIConfig(cfg.Cred, region))
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
-
 	return svc, nil
 }
 
@@ -509,7 +496,6 @@ func RDSService(ctx context.Context, d *plugin.QueryData, region string) (*rds.C
 	if region == "" {
 		return nil, fmt.Errorf("region must be passed RDSService")
 	}
-	// have we already created and cached the service?
 	serviceCacheKey := fmt.Sprintf("rds-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(*rds.Client), nil
@@ -521,15 +507,12 @@ func RDSService(ctx context.Context, d *plugin.QueryData, region string) (*rds.C
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// so it was not in cache - create service
-	svc, err := rds.NewClientWithOptions(region, cfg.Config, cfg.Creds)
+	svc, err := rds.NewClient(newOpenAPIConfig(cfg.Cred, region))
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
-
 	return svc, nil
 }
 
@@ -539,42 +522,45 @@ func SLSService(ctx context.Context, d *plugin.QueryData, region string) (sls.Cl
 		return nil, fmt.Errorf("region must be provided to initialize the SLS service")
 	}
 
-	// have we already created and cached the service?
 	serviceCacheKey := fmt.Sprintf("sls-%s", region)
 	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
 		return cachedData.(sls.ClientInterface), nil
 	}
 
-	// Retrieve cached credentials for authentication
 	credCfg, err := getCredentialSessionCached(ctx, d, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve cached credentials: %v", err)
 	}
 	cfg := credCfg.(*CredentialConfig)
 
-	// Convert to a provider and extract AK/SK/token
-	credentialProvider, err := auth.ToCredentialsProvider(cfg.Creds)
+	// Extract credentials from the v2 credential interface
+	accessKeyId, err := cfg.Cred.GetAccessKeyId()
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert credentials to a provider: %v", err)
+		return nil, fmt.Errorf("failed to get access key id: %v", err)
 	}
-	profileCred, err := credentialProvider.GetCredentials()
+	accessKeySecret, err := cfg.Cred.GetAccessKeySecret()
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve credentials from the provider: %v", err)
+		return nil, fmt.Errorf("failed to get access key secret: %v", err)
+	}
+	securityToken, err := cfg.Cred.GetSecurityToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get security token: %v", err)
 	}
 
-	staticProvider := sls.NewStaticCredentialsProvider(profileCred.AccessKeyId, profileCred.AccessKeySecret, profileCred.SecurityToken)
+	staticProvider := sls.NewStaticCredentialsProvider(
+		dara.StringValue(accessKeyId),
+		dara.StringValue(accessKeySecret),
+		dara.StringValue(securityToken),
+	)
 	endpoint := region + ".log.aliyuncs.com"
 	client := sls.CreateNormalInterfaceV2(endpoint, staticProvider)
 
-	// cache the service connection
 	d.ConnectionManager.Cache.Set(serviceCacheKey, client)
-
 	return client, nil
 }
 
 // GetDefaultRegion returns the default region used
 func GetDefaultRegion(connection *plugin.Connection) string {
-	// get alicloud config info
 	alicloudConfig := GetConfig(connection)
 
 	var regions []string
@@ -585,9 +571,7 @@ func GetDefaultRegion(connection *plugin.Connection) string {
 	}
 
 	if len(regions) > 0 {
-		// Set the first region in regions list to be default region
 		region = regions[0]
-		// check if it is a valid region
 		if len(getInvalidRegions([]string{region})) > 0 {
 			panic("\n\nConnection config have invalid region: " + region + ". Edit your connection configuration file and then restart Steampipe")
 		}
@@ -630,21 +614,6 @@ func getEnvForProfile(_ context.Context, d *plugin.QueryData) (profile string) {
 }
 
 func getEnv(_ context.Context, d *plugin.QueryData) (secretKey string, accessKey string, sessionToken string, err error) {
-	// https://github.com/aliyun/aliyun-cli/blob/master/CHANGELOG.md#3040
-	// The CLI order of preference is:
-	// 1. ALIBABACLOUD_ACCESS_KEY_ID / ALIBABACLOUD_ACCESS_KEY_SECRET / ALIBABACLOUD_REGION_ID
-	// 2. ALICLOUD_ACCESS_KEY_ID / ALICLOUD_ACCESS_KEY_SECRET / ALICLOUD_REGION_ID
-	// 3. ACCESS_KEY_ID / ACCESS_KEY_SECRET / REGION
-	//
-	// The Go SDK and Terraform do:
-	// 1. ALICLOUD_ACCESS_KEY / ALICLOUD_SECRET_KEY / ALICLOUD_REGION
-	//
-	// So, Steampipe will do:
-	// 1. ALIBABACLOUD_ACCESS_KEY_ID / ALIBABACLOUD_ACCESS_KEY_SECRET / ALIBABACLOUD_REGION_ID
-	// 2. ALICLOUD_ACCESS_KEY_ID / ALICLOUD_ACCESS_KEY_SECRET / ALICLOUD_REGION_ID
-	// 3. ALICLOUD_ACCESS_KEY / ALICLOUD_SECRET_KEY / ALICLOUD_REGION
-
-	// get alicloud config info
 	alicloudConfig := GetConfig(d.Connection)
 
 	if alicloudConfig.AccessKey != nil {
@@ -687,13 +656,6 @@ func getEnv(_ context.Context, d *plugin.QueryData) (secretKey string, accessKey
 	return accessKey, secretKey, sessionToken, nil
 }
 
-// Credential configuration
-type CredentialConfig struct {
-	Creds         auth.Credential
-	DefaultRegion string
-	Config        *sdk.Config
-}
-
 // Get credential from the profile configuration for Alicloud CLI
 func getProfileConfigurations(_ context.Context, d *plugin.QueryData) (*CredentialConfig, error) {
 	alicloudConfig := GetConfig(d.Connection)
@@ -709,47 +671,24 @@ func getProfileConfigurations(_ context.Context, d *plugin.QueryData) (*Credenti
 
 func getCredentialConfigByProfile(profile string, d *plugin.QueryData) (*CredentialConfig, error) {
 	defaultRegion := GetDefaultRegion(d.Connection)
-	defaultConfig := sdk.NewConfig().WithScheme("HTTPS")
-	config := GetConfig(d.Connection)
 
-	if config.AutoRetry != nil {
-		defaultConfig = defaultConfig.WithAutoRetry(*config.AutoRetry)
-	}
-	if config.MaxRetryTime != nil {
-		defaultConfig = defaultConfig.WithMaxRetryTime(*config.MaxRetryTime)
-	}
-	if config.Timeout != nil {
-		defaultConfig = defaultConfig.WithTimeout(time.Duration(*config.Timeout) * time.Second)
+	provider, err := credentialProviders.NewCLIProfileCredentialsProviderBuilder().
+		WithProfileName(profile).
+		Build()
+	if err != nil {
+		return nil, err
 	}
 
-	// We will get a nil value if the specified profile is not available
-	// Or
-	// The authentication mode of the profile is not AK | RamRoleArn | StsToken | EcsRamRole As these are the supported type by ALicloud CLI.
-	// https://github.com/aliyun/aliyun-cli/blob/master/README.md#configure-authentication-methods
+	cred := credential.FromCredentialsProvider("cli_profile", provider)
 
-	creds := credentials.NewCLIProfileCredentialsProviderBuilder().WithProfileName(profile).Build()
-
-	return &CredentialConfig{creds, defaultRegion, defaultConfig}, nil
+	return &CredentialConfig{cred, defaultRegion}, nil
 }
 
 var getCredentialSessionCached = plugin.HydrateFunc(getCredentialSessionUncached).Memoize()
 
 func getCredentialSessionUncached(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	var connectionCfg *CredentialConfig
-
 	config := GetConfig(d.Connection)
 	defaultRegion := GetDefaultRegion(d.Connection)
-	defaultConfig := sdk.NewConfig() // initialize with default config
-
-	if config.AutoRetry != nil {
-		defaultConfig = defaultConfig.WithAutoRetry(*config.AutoRetry)
-	}
-	if config.MaxRetryTime != nil {
-		defaultConfig = defaultConfig.WithMaxRetryTime(*config.MaxRetryTime)
-	}
-	if config.Timeout != nil {
-		defaultConfig = defaultConfig.WithTimeout(time.Duration(*config.Timeout) * time.Second)
-	}
 
 	// Profile based client
 	if config.Profile != nil {
@@ -767,14 +706,29 @@ func getCredentialSessionUncached(ctx context.Context, d *plugin.QueryData, h *p
 		return nil, err
 	}
 	if sessionToken != "" && accessKey != "" && secretKey != "" {
-		creds := credentials.NewStsTokenCredential(accessKey, secretKey, sessionToken)
-		connectionCfg = &CredentialConfig{creds, defaultRegion, defaultConfig}
-		return connectionCfg, nil
+		credConfig := &credential.Config{
+			Type:            dara.String("sts"),
+			AccessKeyId:     dara.String(accessKey),
+			AccessKeySecret: dara.String(secretKey),
+			SecurityToken:   dara.String(sessionToken),
+		}
+		cred, err := credential.NewCredential(credConfig)
+		if err != nil {
+			return nil, err
+		}
+		return &CredentialConfig{cred, defaultRegion}, nil
 	}
 	if accessKey != "" && secretKey != "" {
-		creds := credentials.NewAccessKeyCredential(accessKey, secretKey)
-		connectionCfg = &CredentialConfig{creds, defaultRegion, defaultConfig}
-		return connectionCfg, nil
+		credConfig := &credential.Config{
+			Type:            dara.String("access_key"),
+			AccessKeyId:     dara.String(accessKey),
+			AccessKeySecret: dara.String(secretKey),
+		}
+		cred, err := credential.NewCredential(credConfig)
+		if err != nil {
+			return nil, err
+		}
+		return &CredentialConfig{cred, defaultRegion}, nil
 	}
 
 	return nil, nil

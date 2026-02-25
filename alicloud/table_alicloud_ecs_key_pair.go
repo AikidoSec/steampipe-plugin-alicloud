@@ -3,9 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
+	ecs "github.com/alibabacloud-go/ecs-20140526/v7/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -55,7 +54,7 @@ func tableAlicloudEcskeyPair(ctx context.Context) *plugin.Table {
 				Name:        "tags_src",
 				Description: "A list of tags attached with the resource.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(modifyEcsSourceTags),
+				Transform:   transform.FromField("Tags.Tag").Transform(modifyGenericSourceTags),
 			},
 
 			// Steampipe standard columns
@@ -63,7 +62,7 @@ func tableAlicloudEcskeyPair(ctx context.Context) *plugin.Table {
 				Name:        "tags",
 				Description: ColumnDescriptionTags,
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(ecsTagsToMap),
+				Transform:   transform.FromField("Tags.Tag").Transform(genericTagsToMap),
 			},
 			{
 				Name:        "title",
@@ -99,29 +98,29 @@ func tableAlicloudEcskeyPair(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listEcsKeypair(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listEcsKeypair(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := ECSService(ctx, d)
-
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_ecs_keypair.listEcsKeypair", "connection_error", err)
 		return nil, err
 	}
-	request := ecs.CreateDescribeKeyPairsRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &ecs.DescribeKeyPairsRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 	count := 0
 	for {
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeKeyPairs(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_keypair.listEcsKeypair", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_ecs_keypair.listEcsKeypair", err, "request", request)
 			return nil, err
 		}
-		for _, keypair := range response.KeyPairs.KeyPair {
-			plugin.Logger(ctx).Warn("listEcsKeypair", "item", keypair)
-			d.StreamListItem(ctx, keypair)
+		for _, keypair := range response.Body.KeyPairs.KeyPair {
+			plugin.Logger(ctx).Warn("listEcsKeypair", "item", *keypair)
+			d.StreamListItem(ctx, *keypair)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -129,10 +128,10 @@ func listEcsKeypair(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateD
 			}
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(*response.Body.TotalCount) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32((*response.Body.PageNumber) + int32(1))
 	}
 	return nil, nil
 }
@@ -151,24 +150,24 @@ func getEcsKeypair(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 
 	var name string
 	if h.Item != nil {
-		keypair := h.Item.(ecs.KeyPair)
-		name = keypair.KeyPairName
+		keypair := h.Item.(ecs.DescribeKeyPairsResponseBodyKeyPairsKeyPair)
+		name = *keypair.KeyPairName
 	} else {
 		name = d.EqualsQuals["name"].GetStringValue()
 	}
 
-	request := ecs.CreateDescribeKeyPairsRequest()
-	request.Scheme = "https"
-	request.KeyPairName = name
+	request := &ecs.DescribeKeyPairsRequest{
+		KeyPairName: &name,
+	}
 
 	response, err := client.DescribeKeyPairs(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ecs_keypair.getEcsKeypair", "query_error", serverErr, "request", request)
+	if serverErr, ok := err.(*tea.SDKError); ok {
+		logQueryError(ctx, d, h, "alicloud_ecs_keypair.getEcsKeypair", serverErr, "request", request)
 		return nil, serverErr
 	}
 
-	if len(response.KeyPairs.KeyPair) > 0 {
-		return response.KeyPairs.KeyPair[0], nil
+	if len(response.Body.KeyPairs.KeyPair) > 0 {
+		return *response.Body.KeyPairs.KeyPair[0], nil
 	}
 
 	return nil, nil
@@ -176,7 +175,7 @@ func getEcsKeypair(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 
 func getEcsKeypairAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsKeypairAka")
-	data := h.Item.(ecs.KeyPair)
+	data := h.Item.(ecs.DescribeKeyPairsResponseBodyKeyPairsKeyPair)
 	region := d.EqualsQualString(matrixKeyRegion)
 
 	// Get account details
@@ -188,7 +187,7 @@ func getEcsKeypairAka(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrat
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	akas := []string{"acs:ecs:" + region + ":" + accountID + ":keypair/" + data.KeyPairName}
+	akas := []string{"acs:ecs:" + region + ":" + accountID + ":keypair/" + tea.StringValue(data.KeyPairName)}
 
 	return akas, nil
 }

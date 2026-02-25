@@ -2,12 +2,10 @@ package alicloud
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/rds"
+	rds "github.com/alibabacloud-go/rds-20140815/v16/client"
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/sethvargo/go-retry"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
@@ -599,7 +597,7 @@ func tableAlicloudRdsInstance(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listRdsInstances(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listRdsInstances(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	region := d.EqualsQualString(matrixKeyRegion)
 
 	// Create service connection
@@ -608,20 +606,21 @@ func listRdsInstances(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrat
 		plugin.Logger(ctx).Error("alicloud_rds.listRdsInstances", "connection_error", err)
 		return nil, err
 	}
-	request := rds.CreateDescribeDBInstancesRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &rds.DescribeDBInstancesRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+		RegionId:   &region,
+	}
 
 	count := 0
 	for {
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeDBInstances(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_rds.DescribeDBInstances", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_rds.DescribeDBInstances", err, "request", request)
 			return nil, err
 		}
-		for _, i := range response.Items.DBInstance {
+		for _, i := range response.Body.Items.DBInstance {
 			plugin.Logger(ctx).Warn("alicloud_rds.DescribeDBInstances", "item", i)
 			d.StreamListItem(ctx, i)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
@@ -631,10 +630,10 @@ func listRdsInstances(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrat
 			}
 			count++
 		}
-		if count >= response.TotalRecordCount {
+		if count >= int(tea.Int32Value(response.Body.TotalRecordCount)) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(tea.Int32Value(response.Body.PageNumber) + 1)
 	}
 	return nil, nil
 }
@@ -651,16 +650,16 @@ func getRdsInstance(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateD
 		return nil, err
 	}
 
-	var id string
+	var id *string
 	if h.Item != nil {
 		id = databaseID(h.Item)
 	} else {
-		id = d.EqualsQuals["db_instance_id"].GetStringValue()
+		id = tea.String(d.EqualsQuals["db_instance_id"].GetStringValue())
 	}
 
-	request := rds.CreateDescribeDBInstanceAttributeRequest()
-	request.Scheme = "https"
-	request.DBInstanceId = id
+	request := &rds.DescribeDBInstanceAttributeRequest{
+		DBInstanceId: id,
+	}
 	var response *rds.DescribeDBInstanceAttributeResponse
 
 	b := retry.NewFibonacci(100 * time.Millisecond)
@@ -669,8 +668,8 @@ func getRdsInstance(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateD
 		var err error
 		response, err = client.DescribeDBInstanceAttribute(request)
 		if err != nil {
-			if serverErr, ok := err.(*errors.ServerError); ok {
-				if serverErr.ErrorCode() == "Throttling" {
+			if serverErr, ok := err.(*tea.SDKError); ok {
+				if *serverErr.Code == "Throttling" {
 					return retry.RetryableError(err)
 				}
 				return err
@@ -678,14 +677,13 @@ func getRdsInstance(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateD
 		}
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
 
-	if len(response.Items.DBInstanceAttribute) > 0 {
-		if response.Items.DBInstanceAttribute[0].RegionId == region {
-			return response.Items.DBInstanceAttribute[0], nil
+	if len(response.Body.Items.DBInstanceAttribute) > 0 {
+		if *response.Body.Items.DBInstanceAttribute[0].RegionId == region {
+			return *response.Body.Items.DBInstanceAttribute[0], nil
 		}
 	}
 
@@ -702,18 +700,18 @@ func getRdsInstanceIPArrayList(ctx context.Context, d *plugin.QueryData, h *plug
 		return nil, err
 	}
 
-	var id = databaseID(h.Item)
+	id := databaseID(h.Item)
 
-	request := rds.CreateDescribeDBInstanceIPArrayListRequest()
-	request.Scheme = "https"
-	request.DBInstanceId = id
+	request := &rds.DescribeDBInstanceIPArrayListRequest{
+		DBInstanceId: id,
+	}
 	response, err := client.DescribeDBInstanceIPArrayList(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("getRdsInstanceIPArrayList", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "getRdsInstanceIPArrayList", err, "request", request)
 		return nil, err
 	}
 
-	if len(response.Items.DBInstanceIPArray) > 0 {
+	if len(response.Body.Items.DBInstanceIPArray) > 0 {
 		return response, nil
 	}
 
@@ -730,40 +728,40 @@ func getTDEDetails(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 		return nil, err
 	}
 
-	var id string
+	var id *string
 	if h.Item != nil {
 		id = databaseID(h.Item)
 	} else {
-		id = d.EqualsQuals["db_instance_id"].GetStringValue()
+		id = tea.String(d.EqualsQuals["db_instance_id"].GetStringValue())
 	}
 
-	request := rds.CreateDescribeDBInstanceTDERequest()
-	request.Scheme = "https"
-	request.DBInstanceId = id
+	request := &rds.DescribeDBInstanceTDERequest{
+		DBInstanceId: id,
+	}
 	response, err := client.DescribeDBInstanceTDE(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		if serverErr.ErrorCode() == "InvalidDBInstanceId.NotFound" || serverErr.ErrorCode() == "InstanceEngineType.NotSupport" || serverErr.ErrorCode() == "InvaildEngineInRegion.ValueNotSupported" {
+	if serverErr, ok := err.(*tea.SDKError); ok {
+		if *serverErr.Code == "InvalidDBInstanceId.NotFound" || *serverErr.Code == "InstanceEngineType.NotSupport" || *serverErr.Code == "InvaildEngineInRegion.ValueNotSupported" {
 			plugin.Logger(ctx).Warn("alicloud_rds_instance.getTDEDetails", "error", serverErr, "request", request)
 			return nil, nil
 		}
-		plugin.Logger(ctx).Error("getTDEDetails", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "getTDEDetails", err, "request", request)
 		return nil, err
 	}
 
-	// Parse the HTTP response to extract both TDEStatus and EncryptionKey
-	// This follows the same pattern as table_alicloud_cs_kubernetes_cluster.go
-	httpContent := response.GetHttpContentString()
-	if httpContent != "" {
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(httpContent), &result)
-		if err != nil {
-			plugin.Logger(ctx).Error("getTDEDetails", "json_unmarshal_error", err)
-			return response, nil
-		}
-		return result, nil
-	}
+	// // Parse the HTTP response to extract both TDEStatus and EncryptionKey
+	// // This follows the same pattern as table_alicloud_cs_kubernetes_cluster.go
+	// httpContent := response.GetHttpContentString()
+	// if httpContent != "" {
+	// 	var result map[string]interface{}
+	// 	err = json.Unmarshal([]byte(httpContent), &result)
+	// 	if err != nil {
+	// 		plugin.Logger(ctx).Error("getTDEDetails", "json_unmarshal_error", err)
+	// 		return response, nil
+	// 	}
+	// 	return result, nil
+	// }
 
-	return response, nil
+	return *response.Body, nil
 }
 
 func getSSLDetails(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -776,26 +774,26 @@ func getSSLDetails(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 		return nil, err
 	}
 
-	var id string
+	var id *string
 	if h.Item != nil {
 		id = databaseID(h.Item)
 	} else {
-		id = d.EqualsQuals["db_instance_id"].GetStringValue()
+		id = tea.String(d.EqualsQuals["db_instance_id"].GetStringValue())
 	}
 
-	request := rds.CreateDescribeDBInstanceSSLRequest()
-	request.Scheme = "https"
-	request.DBInstanceId = id
+	request := &rds.DescribeDBInstanceSSLRequest{
+		DBInstanceId: id,
+	}
 	response, err := client.DescribeDBInstanceSSL(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		if serverErr.ErrorCode() == "InvalidDBInstanceId.NotFound" {
+	if serverErr, ok := err.(*tea.SDKError); ok {
+		if *serverErr.Code == "InvalidDBInstanceId.NotFound" {
 			plugin.Logger(ctx).Warn("alicloud_rds_instance.getSSLDetails", "not_found_error", serverErr, "request", request)
 			return nil, nil
 		}
-		plugin.Logger(ctx).Error("getSSLDetails", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "getSSLDetails", err, "request", request)
 		return nil, err
 	}
-	if len(response.SSLExpireTime) > 0 {
+	if len(tea.StringValue(response.Body.SSLExpireTime)) > 0 {
 		return "Enabled", nil
 	}
 	return "Disabled", nil
@@ -811,14 +809,14 @@ func getRdsInstanceParameters(ctx context.Context, d *plugin.QueryData, h *plugi
 		return nil, err
 	}
 
-	var id = databaseID(h.Item)
+	id := databaseID(h.Item)
 
-	request := rds.CreateDescribeParametersRequest()
-	request.Scheme = "https"
-	request.DBInstanceId = id
+	request := &rds.DescribeParametersRequest{
+		DBInstanceId: id,
+	}
 	response, err := client.DescribeParameters(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("getRdsInstanceParameters", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "getRdsInstanceParameters", err, "request", request)
 		return nil, err
 	}
 	return response, nil
@@ -834,17 +832,17 @@ func getRdsTags(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData)
 		return nil, err
 	}
 
-	request := rds.CreateDescribeTagsRequest()
-	request.Scheme = "https"
-	request.RegionId = region
-	request.DBInstanceId = databaseID(h.Item)
+	request := &rds.DescribeTagsRequest{
+		RegionId:     &region,
+		DBInstanceId: databaseID(h.Item),
+	}
 	response, err := client.DescribeTags(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		if serverErr.ErrorCode() == "InvalidDBInstanceId.NotFound" {
+	if serverErr, ok := err.(*tea.SDKError); ok {
+		if *serverErr.Code == "InvalidDBInstanceId.NotFound" {
 			plugin.Logger(ctx).Warn("alicloud_rds_instance.getRdsTags", "not_found_error", serverErr, "request", request)
 			return nil, nil
 		}
-		plugin.Logger(ctx).Error("getRdsTags", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "getRdsTags", err, "request", request)
 		return nil, err
 	}
 
@@ -858,12 +856,12 @@ func getRdsTags(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData)
 func getRdsInstanceARN(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	var region, instanceID string
 	switch item := h.Item.(type) {
-	case rds.DBInstance:
-		region = item.RegionId
-		instanceID = item.DBInstanceId
-	case rds.DBInstanceAttribute:
-		region = item.RegionId
-		instanceID = item.DBInstanceId
+	case rds.DescribeDBInstancesResponseBodyItemsDBInstance:
+		region = tea.StringValue(item.RegionId)
+		instanceID = tea.StringValue(item.DBInstanceId)
+	case rds.DescribeDBInstanceAttributeResponseBodyItemsDBInstanceAttribute:
+		region = tea.StringValue(item.RegionId)
+		instanceID = tea.StringValue(item.DBInstanceId)
 	}
 	// Get project details
 	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()
@@ -886,13 +884,13 @@ func getSqlCollectorPolicy(ctx context.Context, d *plugin.QueryData, h *plugin.H
 		return nil, err
 	}
 
-	request := rds.CreateDescribeSQLCollectorPolicyRequest()
-	request.Scheme = "https"
-	request.RegionId = region
-	request.DBInstanceId = databaseID(h.Item)
+	request := &rds.DescribeSQLCollectorPolicyRequest{
+		DBInstanceId: databaseID(h.Item),
+	}
+	// request.RegionId = region
 	response, err := client.DescribeSQLCollectorPolicy(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("getSqlCollectorPolicy", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "getSqlCollectorPolicy", err, "request", request)
 		return nil, err
 	}
 	return response, nil
@@ -908,23 +906,23 @@ func getRdsInstanceEncryptionKey(ctx context.Context, d *plugin.QueryData, h *pl
 		return nil, err
 	}
 
-	request := rds.CreateDescribeDBInstanceEncryptionKeyRequest()
-	request.Scheme = "https"
-	request.RegionId = region
-	request.DBInstanceId = databaseID(h.Item)
+	request := &rds.DescribeDBInstanceEncryptionKeyRequest{
+		RegionId:     &region,
+		DBInstanceId: databaseID(h.Item),
+	}
 	response, err := client.DescribeDBInstanceEncryptionKey(request)
 	if err != nil {
 		// If the transparent data encryption (TDE) is not enabled for the instance the API throws NoActiveBYOK error.
-		serverErr := err.(*errors.ServerError)
-		if serverErr.ErrorCode() == "NoActiveBYOK" {
+		serverErr := err.(*tea.SDKError)
+		if *serverErr.Code == "NoActiveBYOK" {
 			return nil, nil
 		}
-		plugin.Logger(ctx).Error("alicloud_rds_instance.getRdsInstanceEncryptionKey", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_rds_instance.getRdsInstanceEncryptionKey", err, "request", request)
 		return nil, err
 	}
 
 	if response != nil {
-		return response.EncryptionKey, nil
+		return tea.StringValue(response.Body.EncryptionKey), nil
 	}
 
 	return nil, nil
@@ -940,13 +938,14 @@ func getSqlCollectorRetention(ctx context.Context, d *plugin.QueryData, h *plugi
 		return nil, err
 	}
 
-	request := rds.CreateDescribeSQLCollectorRetentionRequest()
-	request.Scheme = "https"
-	request.RegionId = region
-	request.DBInstanceId = databaseID(h.Item)
+	request := &rds.DescribeSQLCollectorRetentionRequest{
+		DBInstanceId: databaseID(h.Item),
+	}
+	// request.RegionId = region
+
 	response, err := client.DescribeSQLCollectorRetention(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("getSqlCollectorRetention", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "getSqlCollectorRetention", err, "request", request)
 		return nil, err
 	}
 	return response, nil
@@ -962,18 +961,19 @@ func getRdsInstanceSecurityGroupConfiguration(ctx context.Context, d *plugin.Que
 		return nil, err
 	}
 
-	request := rds.CreateDescribeSecurityGroupConfigurationRequest()
-	request.Scheme = "https"
-	request.RegionId = region
-	request.DBInstanceId = databaseID(h.Item)
+	request := &rds.DescribeSecurityGroupConfigurationRequest{
+		DBInstanceId: databaseID(h.Item),
+	}
+	// request.RegionId = region
+
 	response, err := client.DescribeSecurityGroupConfiguration(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_rds_instance.getRdsInstanceSecurityGroupConfiguration", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_rds_instance.getRdsInstanceSecurityGroupConfiguration", err, "request", request)
 		return nil, err
 	}
 
-	if len(response.Items.EcsSecurityGroupRelation) > 0 {
-		return response.Items.EcsSecurityGroupRelation, nil
+	if len(response.Body.Items.EcsSecurityGroupRelation) > 0 {
+		return response.Body.Items.EcsSecurityGroupRelation, nil
 	}
 	return nil, nil
 }
@@ -981,14 +981,14 @@ func getRdsInstanceSecurityGroupConfiguration(ctx context.Context, d *plugin.Que
 //// TRANSFORM FUNCTIONS
 
 func getSecurityIps(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	IpArray := d.Value.([]rds.DBInstanceIPArray)
+	IpArray := d.Value.([]rds.DescribeDBInstanceIPArrayListResponseBodyItemsDBInstanceIPArray)
 
 	if len(IpArray) == 0 {
 		return nil, nil
 	}
 	var IpList []string
 	for _, i := range IpArray {
-		IpList = append(IpList, i.SecurityIPList)
+		IpList = append(IpList, tea.StringValue(i.SecurityIPList))
 	}
 	return IpList, nil
 }
@@ -1000,9 +1000,9 @@ func rdsInstanceTagsSrc(_ context.Context, d *transform.TransformData) (interfac
 	}
 
 	var turbotTagsMap []map[string]string
-	if tags.Items.TagInfos != nil {
-		for _, i := range tags.Items.TagInfos {
-			turbotTagsMap = append(turbotTagsMap, map[string]string{"Key": i.TagKey, "Value": i.TagValue})
+	if tags.Body.Items.TagInfos != nil {
+		for _, i := range tags.Body.Items.TagInfos {
+			turbotTagsMap = append(turbotTagsMap, map[string]string{"Key": tea.StringValue(i.TagKey), "Value": tea.StringValue(i.TagValue)})
 		}
 	}
 
@@ -1013,22 +1013,22 @@ func rdsInstanceTags(_ context.Context, d *transform.TransformData) (interface{}
 	tags := d.Value.(*rds.DescribeTagsResponse)
 	var turbotTagsMap map[string]string
 
-	if tags.Items.TagInfos != nil {
+	if tags.Body.Items.TagInfos != nil {
 		turbotTagsMap = map[string]string{}
-		for _, i := range tags.Items.TagInfos {
-			turbotTagsMap[i.TagKey] = i.TagValue
+		for _, i := range tags.Body.Items.TagInfos {
+			turbotTagsMap[tea.StringValue(i.TagKey)] = tea.StringValue(i.TagValue)
 		}
 	}
 
 	return turbotTagsMap, nil
 }
 
-func databaseID(item interface{}) string {
+func databaseID(item interface{}) *string {
 	switch item := item.(type) {
-	case rds.DBInstance:
+	case rds.DescribeDBInstancesResponseBodyItemsDBInstance:
 		return item.DBInstanceId
-	case rds.DBInstanceAttribute:
+	case rds.DescribeDBInstanceAttributeResponseBodyItemsDBInstanceAttribute:
 		return item.DBInstanceId
 	}
-	return ""
+	return tea.String("")
 }

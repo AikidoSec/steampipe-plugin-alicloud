@@ -3,8 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/vpc"
+	"github.com/alibabacloud-go/tea/tea"
+	vpc "github.com/alibabacloud-go/vpc-20160428/v7/client"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -207,29 +207,30 @@ func tableAlicloudVpcEip(ctx context.Context) *plugin.Table {
 	}
 }
 
-func listVpcEip(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listVpcEip(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := VpcService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_eip.listEip", "connection_error", err)
 		return nil, err
 	}
-	request := vpc.CreateDescribeEipAddressesRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &vpc.DescribeEipAddressesRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	count := 0
 	for {
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeEipAddresses(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_eip.listEip", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_eip.listEip", err, "request", request)
 			return nil, err
 		}
-		for _, i := range response.EipAddresses.EipAddress {
+		for _, i := range response.Body.EipAddresses.EipAddress {
 			plugin.Logger(ctx).Warn("alicloud_eip.listEip", "tags", i.Tags, "item", i)
-			d.StreamListItem(ctx, i)
+			d.StreamListItem(ctx, *i)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -237,10 +238,10 @@ func listVpcEip(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData)
 			}
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(tea.Int32Value(response.Body.TotalCount)) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(tea.Int32Value(response.Body.PageNumber) + 1)
 	}
 	return nil, nil
 }
@@ -252,32 +253,31 @@ func getEip(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (in
 		plugin.Logger(ctx).Error("alicloud_eip.getEipAttributes", "connection_error", err)
 		return nil, err
 	}
-	request := vpc.CreateDescribeEipAddressesRequest()
-	request.Scheme = "https"
+	request := &vpc.DescribeEipAddressesRequest{}
 
-	var id string
+	var id *string
 	if h.Item != nil {
-		data := h.Item.(vpc.EipAddress)
+		data := h.Item.(vpc.DescribeEipAddressesResponseBodyEipAddressesEipAddress)
 		id = data.AllocationId
 	} else {
-		id = d.EqualsQuals["allocation_id"].GetStringValue()
+		id = tea.String(d.EqualsQuals["allocation_id"].GetStringValue())
 	}
 	request.AllocationId = id
 	response, err := client.DescribeEipAddresses(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_eip.getEip", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_eip.getEip", err, "request", request)
 		return nil, err
 	}
 
-	if len(response.EipAddresses.EipAddress) > 0 {
-		return response.EipAddresses.EipAddress[0], nil
+	if len(response.Body.EipAddresses.EipAddress) > 0 {
+		return *response.Body.EipAddresses.EipAddress[0], nil
 	}
 	return nil, nil
 }
 
 func getVpcEipArn(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getVpcEipArn")
-	data := h.Item.(vpc.EipAddress)
+	data := h.Item.(vpc.DescribeEipAddressesResponseBodyEipAddressesEipAddress)
 
 	// Get account details
 	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()
@@ -288,7 +288,7 @@ func getVpcEipArn(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDat
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	arn := "arn:acs:vpc:" + data.RegionId + ":" + accountID + ":eip/" + data.AllocationId
+	arn := "arn:acs:vpc:" + tea.StringValue(data.RegionId) + ":" + accountID + ":eip/" + tea.StringValue(data.AllocationId)
 
 	return arn, nil
 }
@@ -297,11 +297,11 @@ func getVpcEipArn(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDat
 
 func getVpcEipTitle(ctx context.Context, d *transform.TransformData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getVpcEipTitle")
-	eip := d.HydrateItem.(vpc.EipAddress)
+	eip := d.HydrateItem.(vpc.DescribeEipAddressesResponseBodyEipAddressesEipAddress)
 
-	if eip.Name != "" {
-		return eip.Name, nil
+	if tea.StringValue(eip.Name) != "" {
+		return *eip.Name, nil
 	}
 
-	return eip.AllocationId, nil
+	return tea.StringValue(eip.AllocationId), nil
 }

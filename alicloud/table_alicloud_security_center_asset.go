@@ -4,8 +4,8 @@ import (
 	"context"
 	"slices"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/sas"
+	sas "github.com/alibabacloud-go/sas-20181203/v8/client"
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
@@ -179,7 +179,7 @@ func tableAlicloudSecurityCenterAsset(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listSecurityCenterAssets(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listSecurityCenterAssets(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	region := d.EqualsQualString(matrixKeyRegion)
 
 	// supported regions for security center are International(cn-hangzhou), Malaysia(ap-southeast-3) and Singapore(ap-southeast-1)
@@ -195,10 +195,10 @@ func listSecurityCenterAssets(ctx context.Context, d *plugin.QueryData, _ *plugi
 		return nil, err
 	}
 
-	request := sas.CreateDescribeCloudCenterInstancesRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.CurrentPage = requests.NewInteger(1)
+	request := &sas.DescribeCloudCenterInstancesRequest{
+		PageSize:    tea.Int32(50),
+		CurrentPage: tea.Int32(1),
+	}
 
 	// Note: DescribeCloudCenterInstances may not support instance_id filter directly
 	// We'll filter in the application layer if needed
@@ -208,16 +208,16 @@ func listSecurityCenterAssets(ctx context.Context, d *plugin.QueryData, _ *plugi
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeCloudCenterInstances(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_listSecurityCenterAssets", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_listSecurityCenterAssets", err, "request", request)
 			return nil, err
 		}
 
-		for _, instance := range response.Instances {
+		for _, instance := range response.Body.Instances {
 			// Apply filters if provided
-			if d.EqualsQualString("instance_id") != "" && instance.InstanceId != d.EqualsQualString("instance_id") {
+			if d.EqualsQualString("instance_id") != "" && tea.StringValue(instance.InstanceId) != d.EqualsQualString("instance_id") {
 				continue
 			}
-			if d.EqualsQualString("client_status") != "" && instance.ClientStatus != d.EqualsQualString("client_status") {
+			if d.EqualsQualString("client_status") != "" && tea.StringValue(instance.ClientStatus) != d.EqualsQualString("client_status") {
 				continue
 			}
 
@@ -230,13 +230,12 @@ func listSecurityCenterAssets(ctx context.Context, d *plugin.QueryData, _ *plugi
 		}
 
 		pageSize := 50
-		if len(response.Instances) < pageSize || count >= response.PageInfo.TotalCount {
+		if len(response.Body.Instances) < pageSize || count >= int(tea.Int32Value(response.Body.PageInfo.TotalCount)) {
 			break
 		}
 
 		// Get current page number from response and increment
-		currentPage := response.PageInfo.CurrentPage + 1
-		request.CurrentPage = requests.NewInteger(currentPage)
+		request.CurrentPage = tea.Int32(tea.Int32Value(response.Body.PageInfo.CurrentPage) + 1)
 	}
 
 	return nil, nil
@@ -247,7 +246,7 @@ func listSecurityCenterAssets(ctx context.Context, d *plugin.QueryData, _ *plugi
 func getSecurityCenterAssetAkas(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getSecurityCenterAssetAkas")
 
-	data := h.Item.(*sas.Instance)
+	data := h.Item.(*sas.DescribeCloudCenterInstancesResponseBodyInstances)
 	region := d.EqualsQualString(matrixKeyRegion)
 
 	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()
@@ -258,7 +257,7 @@ func getSecurityCenterAssetAkas(ctx context.Context, d *plugin.QueryData, h *plu
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	akas := []string{"arn:acs:security-center:" + region + ":" + accountID + ":asset/" + data.Uuid}
+	akas := []string{"arn:acs:security-center:" + region + ":" + accountID + ":asset/" + tea.StringValue(data.Uuid)}
 	return akas, nil
 }
 

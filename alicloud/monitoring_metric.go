@@ -8,8 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/cms"
+	cms "github.com/alibabacloud-go/cms-20190101/v10/client"
+	"github.com/alibabacloud-go/tea/tea"
+
 	"github.com/sethvargo/go-retry"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -123,7 +124,10 @@ func getCMPeriodForGranularity(granularity string) string {
 }
 
 func getCustomError(errorMessage string) error {
-	return errors.NewServerError(500, errorMessage, "")
+	return tea.NewSDKError(map[string]interface{}{
+		"message":    errorMessage,
+		"statusCode": 500,
+	})
 }
 
 func listCMMetricStatistics(ctx context.Context, d *plugin.QueryData, granularity string, namespace string, metricName string, dimensionName string, dimensionValue string) (*cms.DescribeMetricListResponse, error) {
@@ -133,15 +137,16 @@ func listCMMetricStatistics(ctx context.Context, d *plugin.QueryData, granularit
 		plugin.Logger(ctx).Error("listCMMetricStatistics", "connection_error", err)
 		return nil, err
 	}
-	request := cms.CreateDescribeMetricListRequest()
-	metricDimension := "[{\"" + dimensionName + "\": \"" + dimensionValue + "\"}]"
 
-	request.MetricName = metricName
-	request.StartTime = getCMStartDateForGranularity(granularity)
-	request.EndTime = time.Now().Format("2006-01-02T15:04:05Z")
-	request.Namespace = namespace
-	request.Period = getCMPeriodForGranularity(granularity)
-	request.Dimensions = metricDimension
+	request := &cms.DescribeMetricListRequest{
+		Namespace:  &namespace,
+		MetricName: &metricName,
+		Dimensions: tea.String("[{\"" + dimensionName + "\": \"" + dimensionValue + "\"}]"),
+		StartTime:  tea.String(getCMStartDateForGranularity(granularity)),
+		EndTime:    tea.String(time.Now().Format("2006-01-02T15:04:05Z")),
+		Period:     tea.String(getCMPeriodForGranularity(granularity)),
+	}
+
 	var stats *cms.DescribeMetricListResponse
 
 	b := retry.NewFibonacci(100 * time.Millisecond)
@@ -149,10 +154,10 @@ func listCMMetricStatistics(ctx context.Context, d *plugin.QueryData, granularit
 	err = retry.Do(ctx, retry.WithMaxRetries(5, b), func(ctx context.Context) error {
 		var err error
 		stats, err = client.DescribeMetricList(request)
-		if err != nil || stats.Datapoints == "" {
+		if err != nil || stats.Body.Datapoints == nil || *stats.Body.Datapoints == "" {
 			// Common server error retry
-			if serverErr, ok := err.(*errors.ServerError); ok {
-				if serverErr.ErrorCode() == "Throttling" {
+			if serverErr, ok := err.(*tea.SDKError); ok {
+				if serverErr.Code != nil && *serverErr.Code == "Throttling" {
 					return retry.RetryableError(err)
 				}
 				return err
@@ -161,7 +166,7 @@ func listCMMetricStatistics(ctx context.Context, d *plugin.QueryData, granularit
 			* At some point of the time we are getting the error as success response(%!v(PANIC=String method: runtime error: invalid memory address or nil pointer dereference)") which is not expected.
 			* If we will retry the api call then we will able to get the data.
 			**/
-			if stats.Datapoints == "" && !stats.Success {
+			if *stats.Body.Datapoints == "" && !*stats.Body.Success {
 				err = getCustomError(fmt.Sprint(stats))
 				return retry.RetryableError(err)
 			}
@@ -169,7 +174,6 @@ func listCMMetricStatistics(ctx context.Context, d *plugin.QueryData, granularit
 		}
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -178,11 +182,11 @@ func listCMMetricStatistics(ctx context.Context, d *plugin.QueryData, granularit
 
 	// As some point of the time we are getting the error in response not in the error part.
 	// Response in stats variable: "%!v(PANIC=String method: runtime error: invalid memory address or nil pointer dereference)"
-	if stats.Datapoints == "" {
+	if stats.Body.Datapoints == nil || *stats.Body.Datapoints == "" {
 		return nil, nil
 	}
 
-	err = json.Unmarshal([]byte(stats.Datapoints), &results)
+	err = json.Unmarshal([]byte(*stats.Body.Datapoints), &results)
 	if err != nil {
 		return nil, err
 	}
@@ -199,8 +203,8 @@ func listCMMetricStatistics(ctx context.Context, d *plugin.QueryData, granularit
 		})
 	}
 
-	if stats.NextToken != "" {
-		request.NextToken = stats.NextToken
+	if stats.Body.NextToken != nil && *stats.Body.NextToken != "" {
+		request.NextToken = stats.Body.NextToken
 	}
 
 	return nil, nil

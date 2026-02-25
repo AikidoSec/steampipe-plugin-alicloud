@@ -4,9 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ram"
+	ram "github.com/alibabacloud-go/ram-20150501/v2/client"
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/sethvargo/go-retry"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
@@ -192,34 +191,43 @@ func tableAlicloudRAMUser(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listRAMUser(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listRAMUser(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := RAMService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_ram_user.listRAMUser", "connection_error", err)
 		return nil, err
 	}
-	request := ram.CreateListUsersRequest()
-	request.Scheme = "https"
+	request := &ram.ListUsersRequest{}
 	for {
 		response, err := client.ListUsers(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ram_user.listRAMUser", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_ram_user.listRAMUser", err, "request", request)
 			return nil, err
 		}
-		for _, i := range response.Users.User {
+		for _, i := range response.Body.Users.User {
 			plugin.Logger(ctx).Warn("listRAMUser", "item", i)
-			d.StreamListItem(ctx, userInfo{i.UserName, i.UserId, i.DisplayName, i.Email, i.MobilePhone, i.Comments, i.CreateDate, i.UpdateDate, ""})
+			d.StreamListItem(ctx, userInfo{
+				tea.StringValue(i.UserName),
+				tea.StringValue(i.UserId),
+				tea.StringValue(i.DisplayName),
+				tea.StringValue(i.Email),
+				tea.StringValue(i.MobilePhone),
+				tea.StringValue(i.Comments),
+				tea.StringValue(i.CreateDate),
+				tea.StringValue(i.UpdateDate),
+				"",
+			})
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
 			}
 		}
-		if !response.IsTruncated {
+		if response.Body.IsTruncated == nil || !*response.Body.IsTruncated {
 			break
 		}
-		request.Marker = response.Marker
+		request.Marker = response.Body.Marker
 	}
 	return nil, nil
 }
@@ -244,9 +252,9 @@ func getRAMUser(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData)
 		name = d.EqualsQuals["name"].GetStringValue()
 	}
 
-	request := ram.CreateGetUserRequest()
-	request.Scheme = "https"
-	request.UserName = name
+	request := &ram.GetUserRequest{
+		UserName: &name,
+	}
 	var response *ram.GetUserResponse
 
 	b := retry.NewFibonacci(100 * time.Millisecond)
@@ -255,11 +263,11 @@ func getRAMUser(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData)
 		var err error
 		response, err = client.GetUser(request)
 		if err != nil {
-			if serverErr, ok := err.(*errors.ServerError); ok {
-				if serverErr.ErrorCode() == "Throttling" {
+			if serverErr, ok := err.(*tea.SDKError); ok {
+				if serverErr.Code != nil && *serverErr.Code == "Throttling" {
 					return retry.RetryableError(err)
 				}
-				plugin.Logger(ctx).Error("alicloud_ram_user.getRAMUser", "query_error", err, "request", request)
+				logQueryError(ctx, d, h, "alicloud_ram_user.getRAMUser", err, "request", request)
 				return err
 			}
 		}
@@ -270,8 +278,18 @@ func getRAMUser(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData)
 		return nil, err
 	}
 
-	data := response.User
-	return userInfo{data.UserName, data.UserId, data.DisplayName, data.Email, data.MobilePhone, data.Comments, data.CreateDate, data.UpdateDate, data.LastLoginDate}, nil
+	data := response.Body.User
+	return userInfo{
+		tea.StringValue(data.UserName),
+		tea.StringValue(data.UserId),
+		tea.StringValue(data.DisplayName),
+		tea.StringValue(data.Email),
+		tea.StringValue(data.MobilePhone),
+		tea.StringValue(data.Comments),
+		tea.StringValue(data.CreateDate),
+		tea.StringValue(data.UpdateDate),
+		tea.StringValue(data.LastLoginDate),
+	}, nil
 }
 
 func getRAMUserGroups(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -285,17 +303,20 @@ func getRAMUserGroups(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrat
 		return nil, err
 	}
 
-	request := ram.CreateListGroupsForUserRequest()
-	request.Scheme = "https"
-	request.UserName = data.UserName
-
-	response, err := client.ListGroupsForUser(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ram_group.getRAMUserGroups", "query_error", serverErr, "request", request)
-		return nil, serverErr
+	request := &ram.ListGroupsForUserRequest{
+		UserName: &data.UserName,
 	}
 
-	return response.Groups.Group, nil
+	response, err := client.ListGroupsForUser(request)
+	if err != nil {
+		if serverErr, ok := err.(*tea.SDKError); ok {
+			logQueryError(ctx, d, h, "alicloud_ram_group.getRAMUserGroups", serverErr, "request", request)
+			return nil, serverErr
+		}
+		return nil, err
+	}
+
+	return response.Body.Groups.Group, nil
 }
 
 func getRAMUserPolicies(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -309,9 +330,9 @@ func getRAMUserPolicies(ctx context.Context, d *plugin.QueryData, h *plugin.Hydr
 		return nil, err
 	}
 
-	request := ram.CreateListPoliciesForUserRequest()
-	request.Scheme = "https"
-	request.UserName = data.UserName
+	request := &ram.ListPoliciesForUserRequest{
+		UserName: &data.UserName,
+	}
 	var response *ram.ListPoliciesForUserResponse
 
 	b := retry.NewFibonacci(100 * time.Millisecond)
@@ -320,11 +341,11 @@ func getRAMUserPolicies(ctx context.Context, d *plugin.QueryData, h *plugin.Hydr
 		var err error
 		response, err = client.ListPoliciesForUser(request)
 		if err != nil {
-			if serverErr, ok := err.(*errors.ServerError); ok {
-				if serverErr.ErrorCode() == "Throttling" {
+			if serverErr, ok := err.(*tea.SDKError); ok {
+				if serverErr.Code != nil && *serverErr.Code == "Throttling" {
 					return retry.RetryableError(err)
 				}
-				plugin.Logger(ctx).Error("alicloud_ram_group.getRAMUserPolicies", "query_error", serverErr, "request", request)
+				logQueryError(ctx, d, h, "alicloud_ram_group.getRAMUserPolicies", serverErr, "request", request)
 				return nil
 			}
 		}
@@ -335,7 +356,7 @@ func getRAMUserPolicies(ctx context.Context, d *plugin.QueryData, h *plugin.Hydr
 		return nil, err
 	}
 
-	return response, nil
+	return response.Body, nil
 }
 
 func getRAMUserMfaDevices(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -349,18 +370,18 @@ func getRAMUserMfaDevices(ctx context.Context, d *plugin.QueryData, h *plugin.Hy
 		return nil, err
 	}
 
-	request := ram.CreateListVirtualMFADevicesRequest()
-	request.Scheme = "https"
-
-	response, err := client.ListVirtualMFADevices(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ram_group.getRAMUserMfaDevices", "query_error", serverErr, "request", request)
-		return nil, serverErr
+	response, err := client.ListVirtualMFADevices()
+	if err != nil {
+		if serverErr, ok := err.(*tea.SDKError); ok {
+			logQueryError(ctx, d, h, "alicloud_ram_group.getRAMUserMfaDevices", serverErr)
+			return nil, serverErr
+		}
+		return nil, err
 	}
 
-	var items []ram.VirtualMFADevice
-	for _, i := range response.VirtualMFADevices.VirtualMFADevice {
-		if i.User.UserName == data.UserName {
+	var items []*ram.ListVirtualMFADevicesResponseBodyVirtualMFADevicesVirtualMFADevice
+	for _, i := range response.Body.VirtualMFADevices.VirtualMFADevice {
+		if i.User != nil && tea.StringValue(i.User.UserName) == data.UserName {
 			items = append(items, i)
 		}
 	}
@@ -388,7 +409,7 @@ func getCsUserPermissions(ctx context.Context, d *plugin.QueryData, h *plugin.Hy
 	plugin.Logger(ctx).Trace("getCsUserPermissions")
 
 	// Create service connection
-	client, err := RAMService(ctx, d)
+	client, err := ContainerService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("getCsUserPermissions", "connection_error", err)
 		return nil, err
@@ -396,27 +417,19 @@ func getCsUserPermissions(ctx context.Context, d *plugin.QueryData, h *plugin.Hy
 
 	data := h.Item.(userInfo)
 
-	request := requests.NewCommonRequest()
-	request.Method = "GET"
-	request.Scheme = "https"
-	request.Domain = "cs.aliyuncs.com"
-	request.Version = "2015-12-15"
-	request.PathPattern = "/permissions/users/" + data.UserId
-	request.Headers["Content-Type"] = "application/json"
-
-	response, err := client.ProcessCommonRequest(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("getCsUserPermissions", "query_error", serverErr, "request", request)
+	response, err := client.DescribeUserPermission(&data.UserId)
+	if err != nil {
+		logQueryError(ctx, d, h, "getCsUserPermissions", err)
 		return nil, err
 	}
 
-	return response.GetHttpContentString(), nil
+	return response.Body, nil
 }
 
 //// TRANSFORM FUNCTION
 
 func userMfaStatus(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	data := d.HydrateItem.([]ram.VirtualMFADevice)
+	data := d.HydrateItem.([]*ram.ListVirtualMFADevicesResponseBodyVirtualMFADevicesVirtualMFADevice)
 
 	if len(data) > 0 {
 		return true, nil

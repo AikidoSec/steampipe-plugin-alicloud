@@ -3,7 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/rds"
+	rds "github.com/alibabacloud-go/rds-20140815/v16/client"
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
@@ -33,6 +34,6 @@ func tableAlicloudRdsInstanceMetricCpuUtilization(_ context.Context) *plugin.Tab
 }
 
 func listRdsInstanceMetricCpuUtilization(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	data := h.Item.(rds.DBInstance)
-	return listCMMetricStatistics(ctx, d, "5_MIN", "acs_rds_dashboard", "CpuUsage", "instanceId", data.DBInstanceId)
+	data := h.Item.(rds.DescribeDBInstancesResponseBodyItemsDBInstance)
+	return listCMMetricStatistics(ctx, d, "5_MIN", "acs_rds_dashboard", "CpuUsage", "instanceId", tea.StringValue(data.DBInstanceId))
 }

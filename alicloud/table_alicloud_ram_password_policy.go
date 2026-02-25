@@ -3,8 +3,6 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ram"
-
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
@@ -77,32 +75,32 @@ func tableAlicloudRamPasswordPolicy(_ context.Context) *plugin.Table {
 				Name:        "region",
 				Description: ColumnDescriptionRegion,
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromConstant("global")},
+				Transform:   transform.FromConstant("global"),
+			},
 			{
 				Name:        "account_id",
 				Description: ColumnDescriptionAccount,
 				Type:        proto.ColumnType_STRING,
 				Hydrate:     getCommonColumns,
-				Transform:   transform.FromField("AccountID")},
+				Transform:   transform.FromField("AccountID"),
+			},
 		},
 	}
 }
 
 //// LIST FUNCTION
 
-func listRAMPasswordPolicy(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listRAMPasswordPolicy(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	client, err := RAMService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("listRamPasswordPolicy", "connection_error", err)
 		return nil, err
 	}
-	request := ram.CreateGetPasswordPolicyRequest()
-	request.Scheme = "https"
-	response, err := client.GetPasswordPolicy(request)
+	response, err := client.GetPasswordPolicy()
 	if err != nil {
-		plugin.Logger(ctx).Error("listRamPasswordPolicy", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "listRamPasswordPolicy", err)
 		return nil, err
 	}
-	d.StreamListItem(ctx, response.PasswordPolicy)
+	d.StreamListItem(ctx, *response.Body.PasswordPolicy)
 	return nil, nil
 }

@@ -3,9 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/actiontrail"
+	actiontrail "github.com/alibabacloud-go/actiontrail-20200706/v3/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -146,24 +145,24 @@ func tableAlicloudActionTrail(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listActionTrails(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listActionTrails(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := ActionTrailService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("listActionTrails", "connection_error", err)
 		return nil, err
 	}
-	request := actiontrail.CreateDescribeTrailsRequest()
-	request.Scheme = "https"
-	request.IncludeShadowTrails = requests.NewBoolean(true)
+	request := &actiontrail.DescribeTrailsRequest{
+		IncludeShadowTrails: tea.Bool(true),
+	}
 
 	response, err := client.DescribeTrails(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("listActionTrails", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "listActionTrails", err, "request", request)
 		return nil, err
 	}
-	for _, trail := range response.TrailList {
-		d.StreamListItem(ctx, trail)
+	for _, trail := range response.Body.TrailList {
+		d.StreamListItem(ctx, *trail)
 		// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 		// if there is a limit, it will return the number of rows required to reach this limit
 		if d.RowsRemaining(ctx) == 0 {
@@ -187,17 +186,17 @@ func getActionTrail(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateD
 
 	name := d.EqualsQuals["name"].GetStringValue()
 
-	request := actiontrail.CreateDescribeTrailsRequest()
-	request.Scheme = "https"
-	request.NameList = name
+	request := &actiontrail.DescribeTrailsRequest{
+		NameList: tea.String(name),
+	}
 	response, err := client.DescribeTrails(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("getActionTrail", "query_error", serverErr, "request", request)
+	if serverErr, ok := err.(*tea.SDKError); ok {
+		logQueryError(ctx, d, h, "getActionTrail", serverErr, "request", request)
 		return nil, serverErr
 	}
 
-	if len(response.TrailList) > 0 {
-		return response.TrailList[0], nil
+	if len(response.Body.TrailList) > 0 {
+		return *response.Body.TrailList[0], nil
 	}
 
 	return nil, nil
@@ -205,7 +204,7 @@ func getActionTrail(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateD
 
 func getActionTrailAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getActionTrailAka")
-	data := h.Item.(actiontrail.Trail)
+	data := h.Item.(actiontrail.DescribeTrailsResponseBodyTrailList)
 
 	// Get project details
 	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()
@@ -216,7 +215,7 @@ func getActionTrailAka(ctx context.Context, d *plugin.QueryData, h *plugin.Hydra
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	akas := []string{"acs:actiontrail:" + data.HomeRegion + ":" + accountID + ":actiontrail/" + data.Name}
+	akas := []string{"acs:actiontrail:" + *data.HomeRegion + ":" + accountID + ":actiontrail/" + *data.Name}
 
 	return akas, nil
 }

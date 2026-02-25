@@ -5,13 +5,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
 	"github.com/turbot/go-kit/types"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/vpc"
+	"github.com/alibabacloud-go/tea/tea"
+	vpc "github.com/alibabacloud-go/vpc-20160428/v7/client"
 )
 
 //// TABLE DEFINITION
@@ -131,7 +131,7 @@ func tableAlicloudVpcNetworkACL(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listNetworkACLs(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listNetworkACLs(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := VpcService(ctx, d)
 	if err != nil {
@@ -139,21 +139,22 @@ func listNetworkACLs(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrate
 		return nil, err
 	}
 
-	request := vpc.CreateDescribeNetworkAclsRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &vpc.DescribeNetworkAclsRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	count := 0
 	for {
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeNetworkAcls(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_vpc_network_acl.listNetworkACLs", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_vpc_network_acl.listNetworkACLs", err, "request", request)
 			return nil, err
 		}
-		for _, i := range response.NetworkAcls.NetworkAcl {
-			d.StreamListItem(ctx, i)
+		for _, i := range response.Body.NetworkAcls.NetworkAcl {
+			d.StreamListItem(ctx, *i)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -161,12 +162,12 @@ func listNetworkACLs(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrate
 			}
 			count++
 		}
-		totalcount, err := strconv.Atoi(response.TotalCount)
+		totalcount, err := strconv.Atoi(tea.StringValue(response.Body.TotalCount))
 		if err != nil {
 			return nil, err
 		}
 
-		pageNumber, err := strconv.Atoi(response.PageNumber)
+		pageNumber, err := strconv.Atoi(tea.StringValue(response.Body.PageNumber))
 		if err != nil {
 			return nil, err
 		}
@@ -174,7 +175,7 @@ func listNetworkACLs(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrate
 		if count >= totalcount {
 			break
 		}
-		request.PageNumber = requests.NewInteger(pageNumber + 1)
+		request.PageNumber = tea.Int32(int32(pageNumber + 1))
 	}
 	return nil, nil
 }
@@ -192,15 +193,15 @@ func getNetworkACL(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 	}
 	id := d.EqualsQuals["network_acl_id"].GetStringValue()
 
-	request := vpc.CreateDescribeNetworkAclAttributesRequest()
-	request.Scheme = "https"
-	request.NetworkAclId = id
+	request := &vpc.DescribeNetworkAclAttributesRequest{
+		NetworkAclId: &id,
+	}
 
 	response, err := client.DescribeNetworkAclAttributes(request)
 	if err != nil {
 		return nil, err
 	}
-	return response.NetworkAclAttribute, nil
+	return *response.Body.NetworkAclAttribute, nil
 }
 
 func getNetworkACLAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -245,12 +246,12 @@ func networkAclRegion(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrat
 func networkAclData(item interface{}) map[string]string {
 	data := map[string]string{}
 	switch item := item.(type) {
-	case vpc.NetworkAcl:
-		data["ID"] = item.NetworkAclId
-		data["Name"] = item.NetworkAclName
-	case vpc.NetworkAclAttribute:
-		data["ID"] = item.NetworkAclId
-		data["Name"] = item.NetworkAclName
+	case vpc.DescribeNetworkAclsResponseBodyNetworkAclsNetworkAcl:
+		data["ID"] = tea.StringValue(item.NetworkAclId)
+		data["Name"] = tea.StringValue(item.NetworkAclName)
+	case *vpc.DescribeNetworkAclAttributesResponseBodyNetworkAclAttribute:
+		data["ID"] = tea.StringValue(item.NetworkAclId)
+		data["Name"] = tea.StringValue(item.NetworkAclName)
 	}
 	return data
 }

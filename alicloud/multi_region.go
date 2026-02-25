@@ -35,11 +35,18 @@ func BuildRegionList(_ context.Context, d *plugin.QueryData) []map[string]interf
 	}
 }
 
-func getInvalidRegions(regions []string) []string {
-	alicloudRegions := []string{
-		"cn-beijing", "cn-beijing-finance-1", "cn-chengdu", "cn-guangzhou", "cn-hangzhou", "cn-heyuan", "cn-hongkong", "cn-huhehaote", "cn-qingdao", "cn-shanghai", "cn-shanghai-finance-1", "cn-shenzhen", "cn-shenzhen-finance-1", "cn-wulanchabu", "cn-zhangjiakou", "ap-northeast-1", "ap-northeast-2", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ap-southeast-3", "ap-southeast-5", "ap-southeast-6", "ap-southeast-7", "eu-central-1", "eu-west-1", "me-east-1", "me-central-1", "us-east-1", "us-west-1", "cn-wuhan-lr", "cn-nanjing", "cn-fuzhou",
+func getValidRegions() []string {
+	return []string{
+		"cn-beijing", "cn-beijing-finance-1", "cn-chengdu", "cn-guangzhou", "cn-hangzhou", "cn-heyuan", "cn-hongkong",
+		"cn-huhehaote", "cn-qingdao", "cn-shanghai", "cn-shanghai-finance-1", "cn-shenzhen", "cn-shenzhen-finance-1",
+		"cn-wulanchabu", "cn-zhangjiakou", "ap-northeast-1", "ap-northeast-2", "ap-south-1", "ap-southeast-1",
+		"ap-southeast-2", "ap-southeast-3", "ap-southeast-5", "ap-southeast-6", "ap-southeast-7", "eu-central-1",
+		"eu-west-1", "me-east-1", "me-central-1", "us-east-1", "us-west-1", "cn-wuhan-lr", "cn-nanjing", "cn-fuzhou",
 	}
+}
 
+func getInvalidRegions(regions []string) []string {
+	alicloudRegions := getValidRegions()
 	invalidRegions := []string{}
 	for _, region := range regions {
 		if !slices.Contains(alicloudRegions, region) {

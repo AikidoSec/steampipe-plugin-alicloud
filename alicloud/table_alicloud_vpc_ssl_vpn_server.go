@@ -3,13 +3,12 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/vpc"
+	"github.com/alibabacloud-go/tea/tea"
+	vpc "github.com/alibabacloud-go/vpc-20160428/v7/client"
 )
 
 //// TABLE DEFINITION
@@ -137,29 +136,30 @@ func tableAlicloudVpcSslVpnServer(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listVpcVpnSslServers(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listVpcVpnSslServers(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := VpcService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_vpc_vpn_ssl_server.listVpcVpnSslServers", "connection_error", err)
 		return nil, err
 	}
-	request := vpc.CreateDescribeSslVpnServersRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &vpc.DescribeSslVpnServersRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	count := 0
 	for {
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeSslVpnServers(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_vpc_vpn_ssl_server.listVpcVpnSslServers", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_vpc_vpn_ssl_server.listVpcVpnSslServers", err, "request", request)
 			return nil, err
 		}
-		for _, i := range response.SslVpnServers.SslVpnServer {
-			plugin.Logger(ctx).Warn("alicloud_vpc_vpn_ssl_server.listVpcVpnSslServers", "Name", i.Name, "item", i)
-			d.StreamListItem(ctx, i)
+		for _, i := range response.Body.SslVpnServers.SslVpnServer {
+			plugin.Logger(ctx).Warn("alicloud_vpc_vpn_ssl_server.listVpcVpnSslServers", "Name", tea.StringValue(i.Name), "item", *i)
+			d.StreamListItem(ctx, *i)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -167,10 +167,10 @@ func listVpcVpnSslServers(ctx context.Context, d *plugin.QueryData, _ *plugin.Hy
 			}
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(tea.Int32Value(response.Body.TotalCount)) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(tea.Int32Value(response.Body.PageNumber) + 1)
 	}
 	return nil, nil
 }
@@ -187,26 +187,26 @@ func getVpnSslServer(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrate
 		return nil, err
 	}
 
-	var id string
+	var id *string
 	if h.Item != nil {
-		sslServer := h.Item.(vpc.SslVpnServer)
+		sslServer := h.Item.(vpc.DescribeSslVpnServersResponseBodySslVpnServersSslVpnServer)
 		id = sslServer.SslVpnServerId
 	} else {
-		id = d.EqualsQuals["ssl_vpn_server_id"].GetStringValue()
+		id = tea.String(d.EqualsQuals["ssl_vpn_server_id"].GetStringValue())
 	}
 
-	request := vpc.CreateDescribeSslVpnServersRequest()
-	request.Scheme = "https"
-	request.SslVpnServerId = id
+	request := &vpc.DescribeSslVpnServersRequest{
+		SslVpnServerId: id,
+	}
 
 	response, err := client.DescribeSslVpnServers(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_vpc_vpn_ssl_server.getVpnSslServer", "query_error", serverErr, "request", request)
+	if serverErr, ok := err.(*tea.SDKError); ok {
+		logQueryError(ctx, d, h, "alicloud_vpc_vpn_ssl_server.getVpnSslServer", serverErr, "request", request)
 		return nil, serverErr
 	}
 
-	if len(response.SslVpnServers.SslVpnServer) > 0 {
-		return response.SslVpnServers.SslVpnServer[0], nil
+	if len(response.Body.SslVpnServers.SslVpnServer) > 0 {
+		return *response.Body.SslVpnServers.SslVpnServer[0], nil
 	}
 
 	return nil, nil
@@ -214,7 +214,7 @@ func getVpnSslServer(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrate
 
 func getVpnSslServerAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getVpnSslServerAka")
-	sslServer := h.Item.(vpc.SslVpnServer)
+	sslServer := h.Item.(vpc.DescribeSslVpnServersResponseBodySslVpnServersSslVpnServer)
 
 	// Get project details
 	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()
@@ -225,7 +225,7 @@ func getVpnSslServerAka(ctx context.Context, d *plugin.QueryData, h *plugin.Hydr
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	akas := []string{"arn:acs:ecs:" + sslServer.RegionId + ":" + accountID + ":sslVpnServer/" + sslServer.SslVpnServerId}
+	akas := []string{"arn:acs:ecs:" + tea.StringValue(sslServer.RegionId) + ":" + accountID + ":sslVpnServer/" + tea.StringValue(sslServer.SslVpnServerId)}
 
 	return akas, nil
 }
@@ -233,13 +233,13 @@ func getVpnSslServerAka(ctx context.Context, d *plugin.QueryData, h *plugin.Hydr
 //// TRANSFORM FUNCTIONS
 
 func ecsVpnSslServerTitle(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	sslServer := d.HydrateItem.(vpc.SslVpnServer)
+	sslServer := d.HydrateItem.(vpc.DescribeSslVpnServersResponseBodySslVpnServersSslVpnServer)
 
 	// Build resource title
-	title := sslServer.SslVpnServerId
+	title := tea.StringValue(sslServer.SslVpnServerId)
 
-	if len(sslServer.Name) > 0 {
-		title = sslServer.Name
+	if len(tea.StringValue(sslServer.Name)) > 0 {
+		title = tea.StringValue(sslServer.Name)
 	}
 	return title, nil
 }

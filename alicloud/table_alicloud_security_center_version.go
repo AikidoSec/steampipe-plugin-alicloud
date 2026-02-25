@@ -5,7 +5,8 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/sas"
+	sas "github.com/alibabacloud-go/sas-20181203/v8/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -13,7 +14,7 @@ import (
 )
 
 type versionInfo struct {
-	sas.DescribeVersionConfigResponse
+	sas.DescribeVersionConfigResponseBody
 	Region string
 }
 
@@ -141,7 +142,7 @@ func tableAlicloudSecurityCenterVersion(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listSecurityCenterVersions(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listSecurityCenterVersions(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	region := d.EqualsQualString(matrixKeyRegion)
 
 	// supported regions for security center are International(cn-hangzhou), Malaysia(ap-southeast-3) and Singapore(ap-southeast-1)
@@ -156,15 +157,14 @@ func listSecurityCenterVersions(ctx context.Context, d *plugin.QueryData, _ *plu
 		return nil, err
 	}
 
-	request := sas.CreateDescribeVersionConfigRequest()
-	request.Scheme = "https"
+	request := &sas.DescribeVersionConfigRequest{}
 
 	response, err := client.DescribeVersionConfig(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_listSecurityCenterVersions", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_listSecurityCenterVersions", err, "request", request)
 		return nil, err
 	}
-	d.StreamListItem(ctx, versionInfo{*response, region})
+	d.StreamListItem(ctx, versionInfo{*response.Body, region})
 
 	return nil, nil
 }
@@ -185,7 +185,7 @@ func getSecurityCenterVersionAkas(ctx context.Context, d *plugin.QueryData, h *p
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	akas := []string{"arn:acs:security-center:" + data.Region + ":" + accountID + ":version/" + strconv.Itoa(data.Version)}
+	akas := []string{"arn:acs:security-center:" + data.Region + ":" + accountID + ":version/" + strconv.Itoa(int(tea.Int32Value(data.Version)))}
 
 	return akas, nil
 }

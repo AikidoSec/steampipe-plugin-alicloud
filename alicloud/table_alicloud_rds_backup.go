@@ -8,9 +8,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/rds"
+	rds "github.com/alibabacloud-go/rds-20140815/v16/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -196,10 +195,10 @@ func tableAlicloudRdsBackup(ctx context.Context) *plugin.Table {
 
 func listRdsBackups(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	region := d.EqualsQualString(matrixKeyRegion)
-	dbInstance := h.Item.(rds.DBInstance)
+	dbInstance := h.Item.(rds.DescribeDatabasesResponseBodyDatabasesDatabase)
 
 	if d.EqualsQualString("db_instance_id") != "" {
-		if d.EqualsQualString("db_instance_id") != dbInstance.DBInstanceId {
+		if d.EqualsQualString("db_instance_id") != tea.StringValue(dbInstance.DBInstanceId) {
 			return nil, nil
 		}
 	}
@@ -210,32 +209,32 @@ func listRdsBackups(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateD
 		plugin.Logger(ctx).Error("alicloud_rds_backup.listRdsBackups", "connection_error", err)
 		return nil, err
 	}
-	request := rds.CreateDescribeBackupsRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
-	request.DBInstanceId = dbInstance.DBInstanceId
+	request := &rds.DescribeBackupsRequest{
+		PageSize:     tea.Int32(50),
+		PageNumber:   tea.Int32(1),
+		DBInstanceId: dbInstance.DBInstanceId,
+	}
 
 	// Optional Qulas
 	if d.EqualsQualString("backup_id") != "" {
-		request.BackupId = d.EqualsQualString("backup_id")
+		request.BackupId = tea.String(d.EqualsQualString("backup_id"))
 	}
 	if d.EqualsQualString("backup_status") != "" {
-		request.BackupStatus = d.EqualsQualString("backup_status")
+		request.BackupStatus = tea.String(d.EqualsQualString("backup_status"))
 	}
 	if d.EqualsQualString("backup_mode") != "" {
-		request.BackupMode = d.EqualsQualString("backup_mode")
+		request.BackupMode = tea.String(d.EqualsQualString("backup_mode"))
 	}
-	if d.EqualsQualString("backup_location") != "" {
-		request.BackupLocation = d.EqualsQualString("backup_location")
-	}
+	// if d.EqualsQualString("backup_location") != "" {
+	// 	request.BackupLocation = tea.String(d.EqualsQualString("backup_location"))
+	// }
 	quals := d.Quals
 	if quals["backup_start_time"] != nil {
 		for _, q := range quals["backup_start_time"].Quals {
 			startTime := q.Value.GetTimestampValue().AsTime().Format(time.RFC3339)
 			r := regexp.MustCompile(`:[0-9]+Z`)
 			if q.Operator == "=" {
-				request.StartTime = fmt.Sprint(r.ReplaceAllString(startTime, "Z"))
+				request.StartTime = tea.String(fmt.Sprint(r.ReplaceAllString(startTime, "Z")))
 			}
 		}
 	}
@@ -244,7 +243,7 @@ func listRdsBackups(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateD
 			endTime := q.Value.GetTimestampValue().AsTime().Format(time.RFC3339)
 			r := regexp.MustCompile(`:[0-9]+Z`)
 			if q.Operator == "=" {
-				request.EndTime = fmt.Sprint(r.ReplaceAllString(endTime, "Z"))
+				request.EndTime = tea.String(fmt.Sprint(r.ReplaceAllString(endTime, "Z")))
 			}
 		}
 	}
@@ -255,15 +254,15 @@ func listRdsBackups(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateD
 		response, err := client.DescribeBackups(request)
 		if err != nil {
 			// Not found eror code could not be captured in ignore config so need to handle it here.
-			if serverErr, ok := err.(*errors.ServerError); ok {
-				if slices.Contains([]string{"InvalidBackupId.NotFound"}, serverErr.ErrorCode()) {
+			if serverErr, ok := err.(*tea.SDKError); ok {
+				if slices.Contains([]string{"InvalidBackupId.NotFound"}, *serverErr.Code) {
 					return nil, nil
 				}
 			}
-			plugin.Logger(ctx).Error("alicloud_rds_backup.listRdsBackups", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_rds_backup.listRdsBackups", err, "request", request)
 			return nil, err
 		}
-		for _, i := range response.Items.Backup {
+		for _, i := range response.Body.Items.Backup {
 			d.StreamListItem(ctx, i)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
@@ -272,12 +271,12 @@ func listRdsBackups(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateD
 			}
 			count++
 		}
-		totalRecord, _ := strconv.Atoi(response.TotalRecordCount)
-		pageNumber, _ := strconv.Atoi(response.PageNumber)
+		totalRecord, _ := strconv.Atoi(tea.StringValue(response.Body.TotalRecordCount))
+		pageNumber, _ := strconv.Atoi(tea.StringValue(response.Body.PageNumber))
 		if count >= totalRecord {
 			break
 		}
-		request.PageNumber = requests.NewInteger(pageNumber + 1)
+		request.PageNumber = tea.Int32(int32(pageNumber + 1))
 	}
 	return nil, nil
 }

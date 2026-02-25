@@ -6,11 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/alidns"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ess"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/kms"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/vpc"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/go-kit/types"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -26,6 +22,11 @@ const (
 	ColumnDescriptionRegion  = "The Alicloud region in which the resource is located."
 )
 
+type resourceTags = struct {
+	TagKey   string
+	TagValue string
+}
+
 func ensureStringArray(_ context.Context, d *transform.TransformData) (interface{}, error) {
 	switch v := d.Value.(type) {
 	case []string:
@@ -39,7 +40,7 @@ func ensureStringArray(_ context.Context, d *transform.TransformData) (interface
 }
 
 func csvToStringArray(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	s := d.Value.(string)
+	s := tea.StringValue(d.Value.(*string))
 	if s == "" {
 		// Empty string should always be an empty array
 		return []string{}, nil
@@ -51,32 +52,66 @@ func csvToStringArray(_ context.Context, d *transform.TransformData) (interface{
 	return strings.Split(s, sep), nil
 }
 
-func modifyEcsSourceTags(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	tags := d.Value.([]ecs.Tag)
-
-	type resourceTags = struct {
-		TagKey   string
-		TagValue string
+func getGenericTags(d *transform.TransformData) ([]map[string]interface{}, error) {
+	// Strict typing would give a lot of boilerplate, so let's cheat
+	b, err := json.Marshal(d.Value)
+	if err != nil {
+		return nil, err
 	}
+
+	var rawTags []map[string]interface{}
+	if err := json.Unmarshal(b, &rawTags); err != nil {
+		return nil, err
+	}
+	return rawTags, nil
+}
+
+func modifyGenericSourceTags(_ context.Context, d *transform.TransformData) (interface{}, error) {
+	if d.Value == nil {
+		return nil, nil
+	}
+
+	// Strict typing would give a lot of boilerplate, so let's cheat
+	tags, err := getGenericTags(d)
+	if err != nil {
+		return nil, err
+	}
+	if len(tags) == 0 {
+		return nil, nil
+	}
+
+	// We now have a generic interface, but different naming is used accross alicloud
+	// So we'll check for TagKey/Key and TagValue/Value
+
 	var sourceTags []resourceTags
 
-	for _, i := range tags {
-		sourceTags = append(sourceTags, resourceTags{i.TagKey, i.TagValue})
+	for _, tag := range tags {
+		var tagKey, tagValue string
+
+		if val, ok := tag["Key"].(string); ok {
+			tagKey = val
+		} else if val, ok := tag["TagKey"].(string); ok {
+			tagKey = val
+		}
+
+		if val, ok := tag["Value"].(string); ok {
+			tagValue = val
+		} else if val, ok := tag["TagValue"].(string); ok {
+			tagValue = val
+		}
+		sourceTags = append(sourceTags, resourceTags{tagKey, tagValue})
 	}
 
 	return sourceTags, nil
 }
 
-func ecsTagsToMap(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	tags := d.Value.([]ecs.Tag)
-
-	if tags == nil {
-		return nil, nil
+func genericTagsToMap(ctx context.Context, d *transform.TransformData) (interface{}, error) {
+	genericTags, err := modifyGenericSourceTags(ctx, d)
+	if genericTags == nil || err != nil {
+		return nil, err
 	}
 
-	if len(tags) == 0 {
-		return nil, nil
-	}
+	tags := genericTags.([]resourceTags)
 
 	turbotTagsMap := map[string]string{}
 	for _, i := range tags {
@@ -86,102 +121,9 @@ func ecsTagsToMap(_ context.Context, d *transform.TransformData) (interface{}, e
 	return turbotTagsMap, nil
 }
 
-func dnsTagsToMap(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	tags := d.Value.([]alidns.Tag)
-
-	if tags == nil {
-		return nil, nil
-	}
-
-	if len(tags) == 0 {
-		return nil, nil
-	}
-
-	turbotTagsMap := map[string]string{}
-	for _, i := range tags {
-		turbotTagsMap[i.Key] = i.Value
-	}
-
-	return turbotTagsMap, nil
-}
-
-func vpcTurbotTags(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	tags := d.Value.([]vpc.Tag)
-
-	if len(tags) == 0 {
-		return nil, nil
-	}
-
-	turbotTags := map[string]string{}
-	for _, i := range tags {
-		turbotTags[i.Key] = i.Value
-	}
-	return turbotTags, nil
-}
-
-func modifyEssSourceTags(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	tags := d.Value.([]ess.TagResource)
-
-	type resourceTags = struct {
-		TagKey   string
-		TagValue string
-	}
-	var sourceTags []resourceTags
-
-	for _, i := range tags {
-		sourceTags = append(sourceTags, resourceTags{i.TagKey, i.TagValue})
-	}
-
-	return sourceTags, nil
-}
-
-func essTurbotTags(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	tags := d.Value.([]ess.TagResource)
-
-	if len(tags) == 0 {
-		return nil, nil
-	}
-
-	turbotTags := map[string]string{}
-	for _, i := range tags {
-		turbotTags[i.TagKey] = i.TagValue
-	}
-	return turbotTags, nil
-}
-
 func zoneToRegion(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	region := d.Value.(string)
+	region := tea.StringValue(d.Value.(*string))
 	return region[:len(region)-1], nil
-}
-
-func modifyKmsSourceTags(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	tags := d.Value.([]kms.Tag)
-
-	type resourceTags = struct {
-		TagKey   string
-		TagValue string
-	}
-	var sourceTags []resourceTags
-
-	for _, i := range tags {
-		sourceTags = append(sourceTags, resourceTags{i.TagKey, i.TagValue})
-	}
-
-	return sourceTags, nil
-}
-
-func kmsTurbotTags(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	tags := d.Value.([]kms.Tag)
-
-	if len(tags) == 0 {
-		return nil, nil
-	}
-
-	turbotTags := map[string]string{}
-	for _, i := range tags {
-		turbotTags[i.TagKey] = i.TagValue
-	}
-	return turbotTags, nil
 }
 
 func GetBoolQualValue(quals plugin.KeyColumnQualMap, columnName string) (value *bool, exists bool) {
@@ -288,4 +230,13 @@ func (filters *QueryFilters) String() (string, error) {
 	}
 
 	return string(data), nil
+}
+
+func logQueryError(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData, key string, err error, extra ...any) {
+	// Do not pollute the logs with error messages for missing/disable services
+	if !shouldIgnoreErrorPluginDefault()(ctx, d, h, err) {
+		info := []any{"connection_error", err}
+		info = append(info, extra...)
+		plugin.Logger(ctx).Error(key, info...)
+	}
 }

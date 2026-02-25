@@ -6,9 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/vpc"
+	"github.com/alibabacloud-go/tea/tea"
+	vpc "github.com/alibabacloud-go/vpc-20160428/v7/client"
 	"github.com/sethvargo/go-retry"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
@@ -204,7 +203,7 @@ func tableAlicloudVpc(ctx context.Context) *plugin.Table {
 			{
 				Name:        "tags",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(vpcTurbotTags),
+				Transform:   transform.FromField("Tags.Tag").Transform(genericTagsToMap),
 				Description: ColumnDescriptionTags,
 			},
 			{
@@ -239,7 +238,7 @@ func tableAlicloudVpc(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listVpcs(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listVpcs(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := VpcService(ctx, d)
 	if err != nil {
@@ -248,36 +247,32 @@ func listVpcs(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (
 	}
 
 	// https://partners-intl.aliyun.com/help/doc-detail/35739.html?spm=a3c0i.10721930.0.0.195c3d98YEGWuy
-	request := vpc.CreateDescribeVpcsRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &vpc.DescribeVpcsRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	quals := d.Quals
 	if value, ok := GetStringQualValueList(quals, "vpc_id"); ok {
-		request.VpcId = strings.Join(value, ",")
+		request.VpcId = tea.String(strings.Join(value, ","))
 	}
 	if value, ok := GetStringQualValue(quals, "resource_group_id"); ok {
-		request.ResourceGroupId = *value
+		request.ResourceGroupId = value
 	}
 	if value, ok := GetStringQualValue(quals, "name"); ok {
-		request.VpcName = *value
+		request.VpcName = value
 	}
 	if value, ok := GetBoolQualValue(quals, "is_default"); ok {
-		request.IsDefault = requests.NewBoolean(*value)
+		request.IsDefault = value
 	}
 
 	// If the request no of items is less than the paging max limit
 	// update limit to requested no of results.
 	limit := d.QueryContext.Limit
 	if d.QueryContext.Limit != nil {
-		pageSize, err := request.PageSize.GetValue64()
-		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_instance.listEcsInstance", "page_size_error", err)
-			return nil, err
-		}
-		if *limit < pageSize {
-			request.PageSize = requests.NewInteger(int(*limit))
+		if *limit < int64(*request.PageSize) {
+			request.PageSize = tea.Int32(int32(*limit))
 		}
 	}
 
@@ -286,10 +281,10 @@ func listVpcs(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeVpcs(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_vpc.listVpc", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_vpc.listVpc", err, "request", request)
 			return nil, err
 		}
-		for _, i := range response.Vpcs.Vpc {
+		for _, i := range response.Body.Vpcs.Vpc {
 			d.StreamListItem(ctx, i)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
@@ -298,10 +293,10 @@ func listVpcs(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (
 			}
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(tea.Int32Value(response.Body.TotalCount)) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(tea.Int32Value(response.Body.PageNumber) + 1)
 	}
 	return nil, nil
 }
@@ -315,10 +310,10 @@ func getVpcAttributes(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrat
 		plugin.Logger(ctx).Error("getVpcAttributes", "connection_error", err)
 		return nil, err
 	}
-	request := vpc.CreateDescribeVpcAttributeRequest()
-	request.Scheme = "https"
-	i := h.Item.(vpc.Vpc)
-	request.VpcId = i.VpcId
+	i := h.Item.(*vpc.DescribeVpcsResponseBodyVpcsVpc)
+	request := &vpc.DescribeVpcAttributeRequest{
+		VpcId: i.VpcId,
+	}
 
 	var response *vpc.DescribeVpcAttributeResponse
 
@@ -328,38 +323,37 @@ func getVpcAttributes(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrat
 		var err error
 		response, err = client.DescribeVpcAttribute(request)
 		if err != nil {
-			if serverErr, ok := err.(*errors.ServerError); ok {
-				if serverErr.ErrorCode() == "Throttling" {
+			if serverErr, ok := err.(*tea.SDKError); ok {
+				if *serverErr.Code == "Throttling" {
 					return retry.RetryableError(err)
 				}
-				plugin.Logger(ctx).Error("alicloud_vpc.getVpcAttributes", "query_error", err, "request", request)
+				logQueryError(ctx, d, h, "alicloud_vpc.getVpcAttributes", err, "request", request)
 				return err
 			}
 		}
 		return nil
 	})
-
 	if err != nil {
 		plugin.Logger(ctx).Error("getVpcAttributes", "retry_query_error", err, "request", request)
 		return nil, err
 	}
-	return response, nil
+	return response.Body, nil
 }
 
 //// TRANSFORM FUNCTIONS
 
 func vpcArn(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	i := d.HydrateItem.(vpc.Vpc)
-	return "acs:vpc:" + i.RegionId + ":" + strconv.FormatInt(i.OwnerId, 10) + ":vpc/" + i.VpcId, nil
+	i := d.HydrateItem.(*vpc.DescribeVpcsResponseBodyVpcsVpc)
+	return "acs:vpc:" + tea.StringValue(i.RegionId) + ":" + strconv.FormatInt(tea.Int64Value(i.OwnerId), 10) + ":vpc/" + tea.StringValue(i.VpcId), nil
 }
 
 func vpcTitle(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	i := d.HydrateItem.(vpc.Vpc)
+	i := d.HydrateItem.(*vpc.DescribeVpcsResponseBodyVpcsVpc)
 
 	// Build resource title
-	title := i.VpcId
-	if len(i.VpcName) > 0 {
-		title = i.VpcName
+	title := tea.StringValue(i.VpcId)
+	if len(tea.StringValue(i.VpcName)) > 0 {
+		title = tea.StringValue(i.VpcName)
 	}
 
 	return title, nil

@@ -5,8 +5,8 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/cas"
+	cas "github.com/alibabacloud-go/cas-20200407/v4/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -151,7 +151,7 @@ func tableAlicloudUserCertificate(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listUserCertificate(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listUserCertificate(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	region := d.EqualsQualString(matrixKeyRegion)
 
 	// API does not return any error, if the request is made from an unsupported region
@@ -169,22 +169,23 @@ func listUserCertificate(ctx context.Context, d *plugin.QueryData, _ *plugin.Hyd
 		return nil, err
 	}
 
-	request := cas.CreateListUserCertificateOrderRequest()
-	request.ShowSize = "50"
-	request.CurrentPage = "1"
-	request.QueryParams["RegionId"] = region
+	request := &cas.ListUserCertificateOrderRequest{
+		ShowSize:    tea.Int64(50),
+		CurrentPage: tea.Int64(1),
+	}
+	// request.QueryParams["RegionId"] = region
 
 	count := 0
 	for {
 		d.WaitForListRateLimit(ctx)
 		response, err := client.ListUserCertificateOrder(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_user_certificate.listUserCertificate", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_user_certificate.listUserCertificate", err, "request", request)
 			return nil, err
 		}
 
-		for _, i := range response.CertificateOrderList {
-			d.StreamListItem(ctx, i)
+		for _, i := range response.Body.CertificateOrderList {
+			d.StreamListItem(ctx, *i)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -192,10 +193,10 @@ func listUserCertificate(ctx context.Context, d *plugin.QueryData, _ *plugin.Hyd
 			}
 			count++
 		}
-		if count >= int(response.TotalCount) {
+		if count >= int(*response.Body.TotalCount) {
 			break
 		}
-		request.CurrentPage = requests.NewInteger(int(response.CurrentPage) + 1)
+		request.SetCurrentPage(tea.Int64Value(response.Body.CurrentPage) + 1)
 	}
 
 	return nil, nil
@@ -230,12 +231,13 @@ func getUserCertificate(ctx context.Context, d *plugin.QueryData, h *plugin.Hydr
 		id = d.EqualsQuals["id"].GetInt64Value()
 	}
 
-	request := cas.CreateGetUserCertificateDetailRequest()
-	request.CertId = requests.NewInteger(int(id))
+	request := &cas.GetUserCertificateDetailRequest{
+		CertId: &id,
+	}
 
 	response, err := client.GetUserCertificateDetail(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_user_certificate.getUserCertificate", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_user_certificate.getUserCertificate", err, "request", request)
 		return nil, err
 	}
 
@@ -269,10 +271,11 @@ func getUserCertificateRegion(ctx context.Context, d *plugin.QueryData, h *plugi
 
 func casCertificate(item interface{}) int64 {
 	switch item := item.(type) {
-	case cas.CertificateOrderListItem:
-		return item.CertificateId
-	case *cas.GetUserCertificateDetailResponse:
-		return item.Id
+	// case cas.CertificateOrderListItem:
+	case cas.ListUserCertificateOrderResponseBodyCertificateOrderList:
+		return *item.CertificateId
+	case cas.GetUserCertificateDetailResponseBody:
+		return *item.Id
 	}
 	return 0
 }

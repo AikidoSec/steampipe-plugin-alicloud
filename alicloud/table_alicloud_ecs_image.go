@@ -3,13 +3,11 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
+	ecs "github.com/alibabacloud-go/ecs-20140526/v7/client"
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
-
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
 )
 
 //// TABLE DEFINITION
@@ -188,7 +186,7 @@ func tableAlicloudEcsImage(ctx context.Context) *plugin.Table {
 				Name:        "tags_src",
 				Description: "A list of tags attached with the image.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(modifyEcsSourceTags),
+				Transform:   transform.FromField("Tags.Tag").Transform(modifyGenericSourceTags),
 			},
 
 			// Steampipe standard columns
@@ -196,7 +194,7 @@ func tableAlicloudEcsImage(ctx context.Context) *plugin.Table {
 				Name:        "tags",
 				Description: ColumnDescriptionTags,
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(ecsTagsToMap),
+				Transform:   transform.FromField("Tags.Tag").Transform(genericTagsToMap),
 			},
 			{
 				Name:        "akas",
@@ -234,7 +232,7 @@ func tableAlicloudEcsImage(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listEcsImages(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listEcsImages(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := ECSService(ctx, d)
 	if err != nil {
@@ -242,13 +240,14 @@ func listEcsImages(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateDa
 		return nil, err
 	}
 
-	request := ecs.CreateDescribeImagesRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &ecs.DescribeImagesRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 	imageId := d.EqualsQualString("image_id")
 	if imageId != "" {
-		request.ImageId = imageId
+		request.ImageId = &imageId
 	}
 
 	count := 0
@@ -256,12 +255,12 @@ func listEcsImages(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateDa
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeImages(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_image.listEcsImages", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_ecs_image.listEcsImages", err, "request", request)
 			return nil, err
 		}
-		for _, image := range response.Images.Image {
+		for _, image := range response.Body.Images.Image {
 			plugin.Logger(ctx).Warn("listEcsDisk", "item", image)
-			d.StreamListItem(ctx, image)
+			d.StreamListItem(ctx, *image)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -269,10 +268,10 @@ func listEcsImages(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateDa
 			}
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(tea.Int32Value(response.Body.TotalCount)) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(tea.Int32Value(request.PageNumber) + 1)
 	}
 	return nil, nil
 }
@@ -295,19 +294,19 @@ func getEcsImage(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData
 		return nil, nil
 	}
 
-	request := ecs.CreateDescribeImagesRequest()
-	request.Scheme = "https"
-	request.ImageId = id
-	request.RegionId = regionName
+	request := &ecs.DescribeImagesRequest{
+		ImageId:  &id,
+		RegionId: &regionName,
+	}
 
 	response, err := client.DescribeImages(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ecs_image.getEcsImage", "query_error", serverErr, "request", request)
+	if serverErr, ok := err.(*tea.SDKError); ok {
+		logQueryError(ctx, d, h, "alicloud_ecs_image.getEcsImage", serverErr, "request", request)
 		return nil, serverErr
 	}
 
-	if len(response.Images.Image) > 0 {
-		return response.Images.Image[0], nil
+	if len(response.Body.Images.Image) > 0 {
+		return *response.Body.Images.Image[0], nil
 	}
 
 	return nil, nil
@@ -316,10 +315,10 @@ func getEcsImage(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData
 func getEcsImageSharePermission(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsImageSharePermission")
 
-	data := h.Item.(ecs.Image)
+	data := h.Item.(ecs.DescribeImagesResponseBodyImagesImage)
 
 	// This operation can only be performed on a custom image
-	if data.ImageOwnerAlias != "self" {
+	if tea.StringValue(data.ImageOwnerAlias) != "self" {
 		return nil, nil
 	}
 
@@ -331,34 +330,34 @@ func getEcsImageSharePermission(ctx context.Context, d *plugin.QueryData, h *plu
 		plugin.Logger(ctx).Error("alicloud_ecs_image.getEcsImage", "connection_error", err)
 		return nil, err
 	}
-	request := ecs.CreateDescribeImageSharePermissionRequest()
-	request.Scheme = "https"
-	request.ImageId = id
+	request := &ecs.DescribeImageSharePermissionRequest{
+		ImageId: id,
+	}
 
-	var groups []ecs.ShareGroup
-	var accounts []ecs.Account
+	var groups []ecs.DescribeImageSharePermissionResponseBodyShareGroupsShareGroup
+	var accounts []ecs.DescribeImageSharePermissionResponseBodyAccountsAccount
 
 	count := 0
 	for {
 		response, err := client.DescribeImageSharePermission(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_image.getEcsImageSharePermission", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_ecs_image.getEcsImageSharePermission", err, "request", request)
 			return nil, err
 		}
-		for _, group := range response.ShareGroups.ShareGroup {
+		for _, group := range response.Body.ShareGroups.ShareGroup {
 			plugin.Logger(ctx).Warn("listEcsDisk", "item", group)
-			groups = append(groups, group)
+			groups = append(groups, *group)
 			count++
 		}
-		for _, account := range response.Accounts.Account {
+		for _, account := range response.Body.Accounts.Account {
 			plugin.Logger(ctx).Warn("listEcsDisk", "item", account)
-			accounts = append(accounts, account)
+			accounts = append(accounts, *account)
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(tea.Int32Value(response.Body.TotalCount)) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(tea.Int32Value(response.Body.PageNumber) + 1)
 	}
 
 	result := map[string]interface{}{
@@ -372,7 +371,7 @@ func getEcsImageSharePermission(ctx context.Context, d *plugin.QueryData, h *plu
 func getEcsImageARN(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsImageARN")
 
-	data := h.Item.(ecs.Image)
+	data := h.Item.(ecs.DescribeImagesResponseBodyImagesImage)
 	region := d.EqualsQualString(matrixKeyRegion)
 
 	// Get project details
@@ -384,7 +383,7 @@ func getEcsImageARN(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateD
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	arn := "arn:acs:ecs:" + region + ":" + accountID + ":image/" + data.ImageId
+	arn := "arn:acs:ecs:" + region + ":" + accountID + ":image/" + tea.StringValue(data.ImageId)
 
 	return arn, nil
 }

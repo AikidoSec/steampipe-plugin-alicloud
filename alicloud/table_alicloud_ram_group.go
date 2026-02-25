@@ -3,8 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ram"
+	ram "github.com/alibabacloud-go/ram-20150501/v2/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -126,34 +126,38 @@ func tableAlicloudRAMGroup(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listRAMGroup(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listRAMGroup(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	client, err := RAMService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_ram_group.listRAMGroup", "connection_error", err)
 		return nil, err
 	}
-	request := ram.CreateListGroupsRequest()
-	request.Scheme = "https"
+	request := &ram.ListGroupsRequest{}
 
 	for {
 		response, err := client.ListGroups(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ram_group.listRAMGroup", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_ram_group.listRAMGroup", err, "request", request)
 			return nil, err
 		}
-		for _, i := range response.Groups.Group {
+		for _, i := range response.Body.Groups.Group {
 			plugin.Logger(ctx).Warn("listRAMGroup", "item", i)
-			d.StreamListItem(ctx, groupInfo{i.GroupName, i.Comments, i.CreateDate, i.UpdateDate})
+			d.StreamListItem(ctx, groupInfo{
+				tea.StringValue(i.GroupName),
+				tea.StringValue(i.Comments),
+				tea.StringValue(i.CreateDate),
+				tea.StringValue(i.UpdateDate),
+			})
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
 			}
 		}
-		if !response.IsTruncated {
+		if !tea.BoolValue(response.Body.IsTruncated) {
 			break
 		}
-		request.Marker = response.Marker
+		request.Marker = response.Body.Marker
 	}
 	return nil, nil
 }
@@ -170,28 +174,33 @@ func getRAMGroup(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData
 		return nil, err
 	}
 
-	var name string
+	var name *string
 
 	if h.Item != nil {
-		i := h.Item.(ram.Group)
+		i := h.Item.(ram.ListGroupsResponseBodyGroupsGroup)
 		name = i.GroupName
 	} else {
 		quals := d.EqualsQuals
-		name = quals["name"].GetStringValue()
+		name = tea.String(quals["name"].GetStringValue())
 	}
 
-	request := ram.CreateGetGroupRequest()
-	request.Scheme = "https"
-	request.GroupName = name
+	request := &ram.GetGroupRequest{
+		GroupName: name,
+	}
 
 	response, err := client.GetGroup(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_ram_group.getRAMGroup", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_ram_group.getRAMGroup", err, "request", request)
 		return nil, err
 	}
 
-	data := response.Group
-	return groupInfo{data.GroupName, data.Comments, data.CreateDate, data.UpdateDate}, nil
+	data := response.Body.Group
+	return groupInfo{
+		tea.StringValue(data.GroupName),
+		tea.StringValue(data.Comments),
+		tea.StringValue(data.CreateDate),
+		tea.StringValue(data.UpdateDate),
+	}, nil
 }
 
 func getRAMGroupUsers(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -205,17 +214,17 @@ func getRAMGroupUsers(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrat
 		return nil, err
 	}
 
-	request := ram.CreateListUsersForGroupRequest()
-	request.Scheme = "https"
-	request.GroupName = data.GroupName
+	request := &ram.ListUsersForGroupRequest{
+		GroupName: &data.GroupName,
+	}
 
 	response, err := client.ListUsersForGroup(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ram_group.getRAMGroupUsers", "query_error", serverErr, "request", request)
+	if serverErr, ok := err.(*tea.SDKError); ok {
+		logQueryError(ctx, d, h, "alicloud_ram_group.getRAMGroupUsers", serverErr, "request", request)
 		return nil, serverErr
 	}
 
-	return response.Users.User, nil
+	return response.Body.Users.User, nil
 }
 
 func getRAMGroupPolicies(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -229,13 +238,13 @@ func getRAMGroupPolicies(ctx context.Context, d *plugin.QueryData, h *plugin.Hyd
 		return nil, err
 	}
 
-	request := ram.CreateListPoliciesForGroupRequest()
-	request.Scheme = "https"
-	request.GroupName = data.GroupName
+	request := &ram.ListPoliciesForGroupRequest{
+		GroupName: &data.GroupName,
+	}
 
 	response, err := client.ListPoliciesForGroup(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ram_group.getRAMGroupPolicies", "query_error", serverErr, "request", request)
+	if serverErr, ok := err.(*tea.SDKError); ok {
+		logQueryError(ctx, d, h, "alicloud_ram_group.getRAMGroupPolicies", serverErr, "request", request)
 		return nil, serverErr
 	}
 

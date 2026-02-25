@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
+	ecs "github.com/alibabacloud-go/ecs-20140526/v7/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -302,7 +301,7 @@ func tableAlicloudEcsDisk(ctx context.Context) *plugin.Table {
 				Name:        "tags_src",
 				Description: "A list of tags attached with the resource.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(modifyEcsSourceTags),
+				Transform:   transform.FromField("Tags.Tag").Transform(modifyGenericSourceTags),
 			},
 
 			// Steampipe standard columns
@@ -310,7 +309,7 @@ func tableAlicloudEcsDisk(ctx context.Context) *plugin.Table {
 				Name:        "tags",
 				Description: ColumnDescriptionTags,
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(ecsTagsToMap),
+				Transform:   transform.FromField("Tags.Tag").Transform(genericTagsToMap),
 			},
 			{
 				Name:        "akas",
@@ -346,28 +345,29 @@ func tableAlicloudEcsDisk(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listEcsDisk(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listEcsDisk(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := ECSService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_ecs_disk.listEcsDisk", "connection_error", err)
 		return nil, err
 	}
-	request := ecs.CreateDescribeDisksRequest()
-	request.Scheme = "https"
-	request.MaxResults = requests.NewInteger(100)
+	request := &ecs.DescribeDisksRequest{
+		MaxResults: tea.Int32(100),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	// If the request no of items is less than the paging max limit
 	// update limit to the requested no of results.
 	limit := d.QueryContext.Limit
 	if d.QueryContext.Limit != nil {
-		maxResults, err := request.MaxResults.GetValue64()
+		maxResults := int64(tea.Int32Value(request.MaxResults))
 		if err != nil {
 			plugin.Logger(ctx).Error("alicloud_ecs_disk.listEcsDisk", "max_results_error", err)
 			return nil, err
 		}
 		if *limit < maxResults {
-			request.MaxResults = requests.NewInteger(int(*limit))
+			request.MaxResults = tea.Int32(int32(*limit))
 		}
 	}
 
@@ -376,20 +376,20 @@ func listEcsDisk(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeDisks(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_disk.listEcsDisk", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_ecs_disk.listEcsDisk", err, "request", request)
 			return nil, err
 		}
-		for _, disk := range response.Disks.Disk {
+		for _, disk := range response.Body.Disks.Disk {
 			plugin.Logger(ctx).Warn("listEcsDisk", "item", disk)
-			d.StreamListItem(ctx, disk)
+			d.StreamListItem(ctx, *disk)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
 			}
 		}
-		if response.NextToken != "" {
-			request.NextToken = response.NextToken
+		if tea.StringValue(response.Body.NextToken) != "" {
+			request.NextToken = response.Body.NextToken
 		} else {
 			pageLeft = false
 		}
@@ -411,8 +411,8 @@ func getEcsDisk(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData)
 
 	var id string
 	if h.Item != nil {
-		disk := h.Item.(ecs.Disk)
-		id = disk.DiskId
+		disk := h.Item.(ecs.DescribeDisksResponseBodyDisksDisk)
+		id = tea.StringValue(disk.DiskId)
 	} else {
 		id = d.EqualsQuals["disk_id"].GetStringValue()
 	}
@@ -424,18 +424,18 @@ func getEcsDisk(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData)
 		return nil, err
 	}
 
-	request := ecs.CreateDescribeDisksRequest()
-	request.Scheme = "https"
-	request.DiskIds = string(input)
+	request := &ecs.DescribeDisksRequest{
+		DiskIds: tea.String(string(input)),
+	}
 
 	response, err := client.DescribeDisks(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ecs_disk.getEcsDisk", "query_error", serverErr, "request", request)
+	if serverErr, ok := err.(*tea.SDKError); ok {
+		logQueryError(ctx, d, h, "alicloud_ecs_disk.getEcsDisk", serverErr, "request", request)
 		return nil, serverErr
 	}
 
-	if len(response.Disks.Disk) > 0 {
-		return response.Disks.Disk[0], nil
+	if len(response.Body.Disks.Disk) > 0 {
+		return *response.Body.Disks.Disk[0], nil
 	}
 
 	return nil, nil
@@ -443,7 +443,7 @@ func getEcsDisk(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData)
 
 func getEcsDiskAutoSnapshotPolicy(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsDiskAutomaticSnapshotPolicy")
-	disk := h.Item.(ecs.Disk)
+	disk := h.Item.(ecs.DescribeDisksResponseBodyDisksDisk)
 
 	// Create service connection
 	client, err := ECSService(ctx, d)
@@ -452,18 +452,19 @@ func getEcsDiskAutoSnapshotPolicy(ctx context.Context, d *plugin.QueryData, h *p
 		return nil, err
 	}
 
-	request := ecs.CreateDescribeAutoSnapshotPolicyExRequest()
-	request.Scheme = "https"
-	request.AutoSnapshotPolicyId = disk.AutoSnapshotPolicyId
+	request := &ecs.DescribeAutoSnapshotPolicyExRequest{
+		AutoSnapshotPolicyId: tea.String(*disk.AutoSnapshotPolicyId),
+		RegionId:             tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	response, err := client.DescribeAutoSnapshotPolicyEx(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ecs_disk.getEcsDiskAutoSnapshotPolicy", "query_error", serverErr, "request", request)
+	if serverErr, ok := err.(*tea.SDKError); ok {
+		logQueryError(ctx, d, h, "alicloud_ecs_disk.getEcsDiskAutoSnapshotPolicy", serverErr, "request", request)
 		return nil, serverErr
 	}
 
-	if len(response.AutoSnapshotPolicies.AutoSnapshotPolicy) > 0 {
-		return response.AutoSnapshotPolicies.AutoSnapshotPolicy[0], nil
+	if len(response.Body.AutoSnapshotPolicies.AutoSnapshotPolicy) > 0 {
+		return *response.Body.AutoSnapshotPolicies.AutoSnapshotPolicy[0], nil
 	}
 
 	return nil, nil
@@ -471,7 +472,7 @@ func getEcsDiskAutoSnapshotPolicy(ctx context.Context, d *plugin.QueryData, h *p
 
 func getEcsDiskARN(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsDiskARN")
-	disk := h.Item.(ecs.Disk)
+	disk := h.Item.(ecs.DescribeDisksResponseBodyDisksDisk)
 
 	// Get project details
 	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()
@@ -482,7 +483,7 @@ func getEcsDiskARN(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	arn := "arn:acs:ecs:" + disk.RegionId + ":" + accountID + ":disk/" + disk.DiskId
+	arn := "arn:acs:ecs:" + tea.StringValue(disk.RegionId) + ":" + accountID + ":disk/" + tea.StringValue(disk.DiskId)
 
 	return arn, nil
 }
@@ -490,13 +491,13 @@ func getEcsDiskARN(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 //// TRANSFORM FUNCTIONS
 
 func ecsDiskTitle(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	disk := d.HydrateItem.(ecs.Disk)
+	disk := d.HydrateItem.(ecs.DescribeDisksResponseBodyDisksDisk)
 
 	// Build resource title
-	title := disk.DiskId
+	title := tea.StringValue(disk.DiskId)
 
-	if len(disk.DiskName) > 0 {
-		title = disk.DiskName
+	if len(tea.StringValue(disk.DiskName)) > 0 {
+		title = *disk.DiskName
 	}
 
 	return title, nil

@@ -3,9 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ram"
-
+	ram "github.com/alibabacloud-go/ram-20150501/v2/client"
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
@@ -128,14 +127,15 @@ func tableAlicloudRAMRole(ctx context.Context) *plugin.Table {
 				Description: ColumnDescriptionAccount,
 				Type:        proto.ColumnType_STRING,
 				Hydrate:     getCommonColumns,
-				Transform:   transform.FromField("AccountID")},
+				Transform:   transform.FromField("AccountID"),
+			},
 		},
 	}
 }
 
 //// LIST FUNCTION
 
-func listRAMRoles(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listRAMRoles(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := RAMService(ctx, d)
 	if err != nil {
@@ -143,28 +143,36 @@ func listRAMRoles(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateDat
 		return nil, err
 	}
 
-	request := ram.CreateListRolesRequest()
-	request.Scheme = "https"
+	request := &ram.ListRolesRequest{}
 
 	for {
 		response, err := client.ListRoles(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ram_role.listRAMRoles", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_ram_role.listRAMRoles", err, "request", request)
 			return nil, err
 		}
-		for _, i := range response.Roles.Role {
-			plugin.Logger(ctx).Warn("listRAMRoles", "item", i)
-			d.StreamListItem(ctx, roleInfo{i.RoleId, i.RoleName, i.Arn, i.Description, "", i.CreateDate, i.UpdateDate, i.MaxSessionDuration})
+		for _, i := range response.Body.Roles.Role {
+			plugin.Logger(ctx).Warn("listRAMRoles", "item", *i)
+			d.StreamListItem(ctx, roleInfo{
+				tea.StringValue(i.RoleId),
+				tea.StringValue(i.RoleName),
+				tea.StringValue(i.Arn),
+				tea.StringValue(i.Description),
+				"",
+				tea.StringValue(i.CreateDate),
+				tea.StringValue(i.UpdateDate),
+				tea.Int64Value(i.MaxSessionDuration),
+			})
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
 			}
 		}
-		if !response.IsTruncated {
+		if !tea.BoolValue(response.Body.IsTruncated) {
 			break
 		}
-		request.Marker = response.Marker
+		request.Marker = response.Body.Marker
 	}
 	return nil, nil
 }
@@ -189,18 +197,27 @@ func getRAMRole(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData)
 		name = d.EqualsQuals["name"].GetStringValue()
 	}
 
-	request := ram.CreateGetRoleRequest()
-	request.Scheme = "https"
-	request.RoleName = name
+	request := &ram.GetRoleRequest{
+		RoleName: &name,
+	}
 
 	response, err := client.GetRole(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_ram_role.getRAMRole", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_ram_role.getRAMRole", err, "request", request)
 		return nil, err
 	}
 
-	data := response.Role
-	return roleInfo{data.RoleId, data.RoleName, data.Arn, data.Description, data.AssumeRolePolicyDocument, data.CreateDate, data.UpdateDate, data.MaxSessionDuration}, nil
+	data := response.Body.Role
+	return roleInfo{
+		tea.StringValue(data.RoleId),
+		tea.StringValue(data.RoleName),
+		tea.StringValue(data.Arn),
+		tea.StringValue(data.Description),
+		tea.StringValue(data.AssumeRolePolicyDocument),
+		tea.StringValue(data.CreateDate),
+		tea.StringValue(data.UpdateDate),
+		tea.Int64Value(data.MaxSessionDuration),
+	}, nil
 }
 
 func getRAMRolePolicies(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -214,13 +231,13 @@ func getRAMRolePolicies(ctx context.Context, d *plugin.QueryData, h *plugin.Hydr
 		return nil, err
 	}
 
-	request := ram.CreateListPoliciesForRoleRequest()
-	request.Scheme = "https"
-	request.RoleName = data.RoleName
+	request := &ram.ListPoliciesForRoleRequest{
+		RoleName: &data.RoleName,
+	}
 
 	response, err := client.ListPoliciesForRole(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ram_group.getRAMRolePolicies", "query_error", serverErr, "request", request)
+	if serverErr, ok := err.(*tea.SDKError); ok {
+		logQueryError(ctx, d, h, "alicloud_ram_group.getRAMRolePolicies", serverErr, "request", request)
 		return nil, serverErr
 	}
 

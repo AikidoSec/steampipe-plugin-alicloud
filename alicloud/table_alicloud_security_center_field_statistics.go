@@ -4,7 +4,7 @@ import (
 	"context"
 	"slices"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/sas"
+	sas "github.com/alibabacloud-go/sas-20181203/v8/client"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -12,7 +12,7 @@ import (
 )
 
 type FieldInfo struct {
-	sas.GroupedFields
+	sas.DescribeFieldStatisticsResponseBodyGroupedFields
 	Region string
 }
 
@@ -126,7 +126,7 @@ func tableAlicloudSecurityCenterFieldStatistics(ctx context.Context) *plugin.Tab
 
 //// LIST FUNCTION
 
-func listSecurityCenterFieldStatistics(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listSecurityCenterFieldStatistics(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	region := d.EqualsQualString(matrixKeyRegion)
 
 	// supported regions for security center are International(cn-hangzhou), Malaysia(ap-southeast-3) and Singapore(ap-southeast-1)
@@ -141,15 +141,14 @@ func listSecurityCenterFieldStatistics(ctx context.Context, d *plugin.QueryData,
 		return nil, err
 	}
 
-	request := sas.CreateDescribeFieldStatisticsRequest()
-	request.Scheme = "https"
+	request := &sas.DescribeFieldStatisticsRequest{}
 
 	response, err := client.DescribeFieldStatistics(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_listSecurityCenterFieldStatistics", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_listSecurityCenterFieldStatistics", err, "request", request)
 		return nil, err
 	}
-	d.StreamListItem(ctx, FieldInfo{response.GroupedFields, region})
+	d.StreamListItem(ctx, FieldInfo{*response.Body.GroupedFields, region})
 
 	return nil, nil
 }

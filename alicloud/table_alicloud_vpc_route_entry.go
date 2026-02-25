@@ -7,7 +7,8 @@ import (
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/vpc"
+	"github.com/alibabacloud-go/tea/tea"
+	vpc "github.com/alibabacloud-go/vpc-20160428/v7/client"
 )
 
 //// TABLE DEFINITION
@@ -149,19 +150,19 @@ func listVpcRouteEntries(ctx context.Context, d *plugin.QueryData, h *plugin.Hyd
 	}
 
 	// Get VPC Route Table details
-	routeTable := h.Item.(vpc.RouterTableListType)
+	routeTable := h.Item.(vpc.DescribeRouteTableListResponseBodyRouterTableListRouterTableListType)
 
-	request := vpc.CreateDescribeRouteEntryListRequest()
-	request.Scheme = "https"
-	request.RouteTableId = routeTable.RouteTableId
+	request := &vpc.DescribeRouteEntryListRequest{
+		RouteTableId: routeTable.RouteTableId,
+	}
 
 	response, err := client.DescribeRouteEntryList(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_vpc_route_entry.listVpcRouteEntries", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_vpc_route_entry.listVpcRouteEntries", err, "request", request)
 		return nil, err
 	}
-	for _, i := range response.RouteEntrys.RouteEntry {
-		d.StreamLeafListItem(ctx, i)
+	for _, i := range response.Body.RouteEntrys.RouteEntry {
+		d.StreamLeafListItem(ctx, *i)
 	}
 
 	return nil, nil
@@ -172,7 +173,7 @@ func listVpcRouteEntries(ctx context.Context, d *plugin.QueryData, h *plugin.Hyd
 func getVpcRouteEntryTurbotData(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getVpcRouteEntryTurbotData")
 	region := d.EqualsQualString(matrixKeyRegion)
-	data := h.Item.(vpc.RouteEntry)
+	data := h.Item.(vpc.DescribeRouteEntryListResponseBodyRouteEntrysRouteEntry)
 
 	// Get project details
 	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()
@@ -185,15 +186,20 @@ func getVpcRouteEntryTurbotData(ctx context.Context, d *plugin.QueryData, h *plu
 
 	var title string
 	var akas []string
-	if len(data.RouteEntryId) > 0 {
-		akas = []string{"acs:vpc:" + region + ":" + accountID + ":route-entry/" + data.RouteEntryId}
-		title = data.RouteEntryName
+	if len(tea.StringValue(data.RouteEntryId)) > 0 {
+		akas = []string{"acs:vpc:" + region + ":" + accountID + ":route-entry/" + tea.StringValue(data.RouteEntryId)}
+		title = tea.StringValue(data.RouteEntryName)
 	} else {
-		akas = []string{"acs:vpc:" + region + ":" + accountID + ":route-entry/" + data.RouteTableId}
-		if len(data.NextHops.NextHop[0].NextHopId) > 0 {
-			title = data.RouteTableId + ":" + data.DestinationCidrBlock + ":" + data.NextHops.NextHop[0].NextHopType + ":" + data.NextHops.NextHop[0].NextHopId
+		akas = []string{"acs:vpc:" + region + ":" + accountID + ":route-entry/" + tea.StringValue(data.RouteTableId)}
+		if len(tea.StringValue(data.NextHops.NextHop[0].NextHopId)) > 0 {
+			title = tea.StringValue(data.RouteTableId) +
+				":" + tea.StringValue(data.DestinationCidrBlock) +
+				":" + tea.StringValue(data.NextHops.NextHop[0].NextHopType) +
+				":" + tea.StringValue(data.NextHops.NextHop[0].NextHopId)
 		} else {
-			title = data.RouteTableId + ":" + data.DestinationCidrBlock + ":" + data.NextHops.NextHop[0].NextHopType
+			title = tea.StringValue(data.RouteTableId) +
+				":" + tea.StringValue(data.DestinationCidrBlock) +
+				":" + tea.StringValue(data.NextHops.NextHop[0].NextHopType)
 		}
 	}
 

@@ -5,11 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/kms"
 	"github.com/sethvargo/go-retry"
 
+	kms "github.com/alibabacloud-go/kms-20160120/v3/client"
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
@@ -124,7 +123,7 @@ func tableAlicloudKmsSecret(ctx context.Context) *plugin.Table {
 				Description: "A list of tags attached with the resource.",
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     getKmsSecret,
-				Transform:   transform.FromField("Tags.Tag").Transform(modifyKmsSourceTags),
+				Transform:   transform.FromField("Tags.Tag").Transform(modifyGenericSourceTags),
 			},
 
 			// Steampipe standard columns
@@ -133,7 +132,7 @@ func tableAlicloudKmsSecret(ctx context.Context) *plugin.Table {
 				Description: ColumnDescriptionTags,
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     getKmsSecret,
-				Transform:   transform.FromField("Tags.Tag").Transform(kmsTurbotTags),
+				Transform:   transform.FromField("Tags.Tag").Transform(genericTagsToMap),
 			},
 			{
 				Name:        "akas",
@@ -170,35 +169,35 @@ func tableAlicloudKmsSecret(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listKmsSecret(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listKmsSecret(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := KMSService(ctx, d)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_kms_secret.listKmsSecret", "connection_error", err)
+		logQueryError(ctx, d, h, "alicloud_kms_secret.listKmsSecret", err)
 		return nil, err
 	}
 
-	request := kms.CreateListSecretsRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &kms.ListSecretsRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+	}
 
 	count := 0
 	for {
 		d.WaitForListRateLimit(ctx)
 		response, err := client.ListSecrets(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_kms_secret.listKmsSecret", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_kms_secret.listKmsSecret", err, "request", request)
 			return nil, err
 		}
-		for _, i := range response.SecretList.Secret {
-			d.StreamListItem(ctx, &kms.DescribeSecretResponse{
+		for _, i := range response.Body.SecretList.Secret {
+			d.StreamListItem(ctx, &kms.ListSecretsResponseBodySecretListSecret{
 				CreateTime:        i.CreateTime,
 				PlannedDeleteTime: i.PlannedDeleteTime,
 				SecretName:        i.SecretName,
 				UpdateTime:        i.UpdateTime,
 				SecretType:        i.SecretType,
-				Tags: kms.TagsInDescribeSecret{
+				Tags: &kms.ListSecretsResponseBodySecretListSecretTags{
 					Tag: i.Tags.Tag,
 				},
 			})
@@ -209,10 +208,10 @@ func listKmsSecret(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateDa
 			}
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(*response.Body.TotalCount) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(tea.Int32Value(response.Body.PageNumber) + 1)
 	}
 	return nil, nil
 }
@@ -229,19 +228,19 @@ func getKmsSecret(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDat
 		return nil, err
 	}
 
-	var name string
+	var name *string
 	var response *kms.DescribeSecretResponse
 	if h.Item != nil {
 		data := h.Item.(*kms.DescribeSecretResponse)
-		name = data.SecretName
+		name = data.Body.SecretName
 	} else {
-		name = d.EqualsQuals["name"].GetStringValue()
+		name = tea.String(d.EqualsQuals["name"].GetStringValue())
 	}
 
-	request := kms.CreateDescribeSecretRequest()
-	request.Scheme = "https"
-	request.SecretName = name
-	request.FetchTags = "true"
+	request := &kms.DescribeSecretRequest{
+		SecretName: name,
+		FetchTags:  tea.String("true"),
+	}
 
 	b := retry.NewFibonacci(100 * time.Millisecond)
 
@@ -249,17 +248,16 @@ func getKmsSecret(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDat
 		var err error
 		response, err = client.DescribeSecret(request)
 		if err != nil {
-			if serverErr, ok := err.(*errors.ServerError); ok {
-				if serverErr.ErrorCode() == "Throttling" {
+			if serverErr, ok := err.(*tea.SDKError); ok {
+				if *serverErr.Code == "Throttling" {
 					return retry.RetryableError(err)
 				}
-				plugin.Logger(ctx).Error("alicloud_kms_key.getKmsSecret", "query_error", err, "request", request)
+				logQueryError(ctx, d, h, "alicloud_kms_key.getKmsSecret", err, "request", request)
 				return err
 			}
 		}
 		return nil
 	})
-
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_kms_secret.getKmsSecret", "query_retry_error", err, "request", request)
 		return nil, err
@@ -280,10 +278,10 @@ func listKmsSecretVersionIds(ctx context.Context, d *plugin.QueryData, h *plugin
 	secretData := h.Item.(*kms.DescribeSecretResponse)
 	var response *kms.ListSecretVersionIdsResponse
 
-	request := kms.CreateListSecretVersionIdsRequest()
-	request.Scheme = "https"
-	request.SecretName = secretData.SecretName
-	request.IncludeDeprecated = "true"
+	request := &kms.ListSecretVersionIdsRequest{
+		SecretName:        secretData.Body.SecretName,
+		IncludeDeprecated: tea.String("true"),
+	}
 
 	b := retry.NewFibonacci(100 * time.Millisecond)
 
@@ -291,24 +289,23 @@ func listKmsSecretVersionIds(ctx context.Context, d *plugin.QueryData, h *plugin
 		var err error
 		response, err = client.ListSecretVersionIds(request)
 		if err != nil {
-			if serverErr, ok := err.(*errors.ServerError); ok {
-				if serverErr.ErrorCode() == "Throttling" {
+			if serverErr, ok := err.(*tea.SDKError); ok {
+				if *serverErr.Code == "Throttling" {
 					return retry.RetryableError(err)
 				}
-				plugin.Logger(ctx).Error("alicloud_kms_key.listKmsSecretVersionIds", "query_error", err, "request", request)
+				logQueryError(ctx, d, h, "alicloud_kms_key.listKmsSecretVersionIds", err, "request", request)
 				return err
 			}
 		}
 		return nil
 	})
-
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_kms_key.listKmsSecretVersionIds", "retry_query_error", err, "request", request)
 		return nil, err
 	}
 
-	if len(response.VersionIds.VersionId) > 0 {
-		return response.VersionIds, nil
+	if len(response.Body.VersionIds.VersionId) > 0 {
+		return response.Body.VersionIds, nil
 	}
 
 	return nil, nil
@@ -317,9 +314,9 @@ func listKmsSecretVersionIds(ctx context.Context, d *plugin.QueryData, h *plugin
 //// TRANSFORM FUNCTIONS
 
 func fetchRegionFromArn(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	data := d.HydrateItem.(*kms.DescribeSecretResponse)
+	data := d.HydrateItem.(*kms.DescribeSecretResponseBody)
 
 	resourceArn := data.Arn
-	region := strings.Split(resourceArn, ":")[2]
+	region := strings.Split(tea.StringValue(resourceArn), ":")[2]
 	return region, nil
 }

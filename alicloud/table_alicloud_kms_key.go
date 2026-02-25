@@ -4,9 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/kms"
+	kms "github.com/alibabacloud-go/kms-20160120/v3/client"
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/sethvargo/go-retry"
 	"github.com/turbot/go-kit/helpers"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
@@ -152,7 +151,7 @@ func tableAlicloudKmsKey(ctx context.Context) *plugin.Table {
 				Description: "A list of tags assigned to the key.",
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     getKeyTags,
-				Transform:   transform.FromField("Tags.Tag").Transform(modifyKmsSourceTags),
+				Transform:   transform.FromField("Tags.Tag").Transform(modifyGenericSourceTags),
 			},
 
 			// Steampipe standard columns
@@ -161,7 +160,7 @@ func tableAlicloudKmsKey(ctx context.Context) *plugin.Table {
 				Description: ColumnDescriptionTags,
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     getKeyTags,
-				Transform:   transform.FromField("Tags.Tag").Transform(kmsTurbotTags),
+				Transform:   transform.FromField("Tags.Tag").Transform(genericTagsToMap),
 			},
 			{
 				Name:        "title",
@@ -198,7 +197,7 @@ func tableAlicloudKmsKey(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listKmsKey(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listKmsKey(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := KMSService(ctx, d)
 	if err != nil {
@@ -206,10 +205,10 @@ func listKmsKey(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData)
 		return nil, err
 	}
 
-	request := kms.CreateListKeysRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(100)
-	request.PageNumber = requests.NewInteger(1)
+	request := &kms.ListKeysRequest{
+		PageSize:   tea.Int32(100),
+		PageNumber: tea.Int32(1),
+	}
 
 	// https://partners-intl.aliyun.com/help/doc-detail/28951.htm
 	var queryFilters QueryFilters
@@ -240,7 +239,7 @@ func listKmsKey(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData)
 			plugin.Logger(ctx).Error("alicloud_kms_key.listKmsKey", "filter_string_error", err)
 			return nil, err
 		}
-		request.Filters = filter
+		request.Filters = &filter
 	}
 
 	plugin.Logger(ctx).Info("alicloud_kms_key.listKmsKey", "filter", request.Filters)
@@ -249,13 +248,8 @@ func listKmsKey(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData)
 	// update limit to requested no of results.
 	limit := d.QueryContext.Limit
 	if d.QueryContext.Limit != nil {
-		pageSize, err := request.PageSize.GetValue64()
-		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_instance.listEcsInstance", "page_size_error", err)
-			return nil, err
-		}
-		if *limit < pageSize {
-			request.PageSize = requests.NewInteger(int(*limit))
+		if *limit < int64(tea.Int32Value(request.PageSize)) {
+			request.PageSize = tea.Int32(int32(*limit))
 		}
 	}
 
@@ -264,11 +258,11 @@ func listKmsKey(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData)
 		d.WaitForListRateLimit(ctx)
 		response, err := client.ListKeys(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_kms_key.listKmsKey", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_kms_key.listKmsKey", err)
 			return nil, err
 		}
-		for _, i := range response.Keys.Key {
-			d.StreamListItem(ctx, kms.KeyMetadata{Arn: i.KeyArn, KeyId: i.KeyId})
+		for _, i := range response.Body.Keys.Key {
+			d.StreamListItem(ctx, kms.DescribeKeyResponseBodyKeyMetadata{Arn: i.KeyArn, KeyId: i.KeyId})
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -276,10 +270,10 @@ func listKmsKey(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData)
 			}
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(*response.Body.TotalCount) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(*response.Body.PageNumber + 1)
 	}
 	return nil, nil
 }
@@ -296,18 +290,18 @@ func getKmsKey(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) 
 		return nil, err
 	}
 
-	var id string
+	var id *string
 	var response *kms.DescribeKeyResponse
 	if h.Item != nil {
-		data := h.Item.(kms.KeyMetadata)
+		data := h.Item.(kms.DescribeKeyResponseBodyKeyMetadata)
 		id = data.KeyId
 	} else {
-		id = d.EqualsQuals["key_id"].GetStringValue()
+		id = tea.String(d.EqualsQuals["key_id"].GetStringValue())
 	}
 
-	request := kms.CreateDescribeKeyRequest()
-	request.Scheme = "https"
-	request.KeyId = id
+	request := &kms.DescribeKeyRequest{
+		KeyId: id,
+	}
 
 	b := retry.NewFibonacci(100 * time.Millisecond)
 
@@ -315,23 +309,22 @@ func getKmsKey(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) 
 		var err error
 		response, err = client.DescribeKey(request)
 		if err != nil {
-			if serverErr, ok := err.(*errors.ServerError); ok {
-				if serverErr.ErrorCode() == "Throttling" {
+			if serverErr, ok := err.(*tea.SDKError); ok {
+				if *serverErr.Code == "Throttling" {
 					return retry.RetryableError(err)
 				}
-				plugin.Logger(ctx).Error("alicloud_kms_key.getKmsKey", "query_error", err, "request", request)
+				logQueryError(ctx, d, h, "alicloud_kms_key.getKmsKey", err, "request", request)
 				return err
 			}
 		}
 		return nil
 	})
-
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_kms_key.getKmsKey", "query_retry_error", err, "request", request)
 		return nil, err
 	}
 
-	return response.KeyMetadata, nil
+	return *response.Body.KeyMetadata, nil
 }
 
 func getKeyAlias(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -344,11 +337,11 @@ func getKeyAlias(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData
 		return nil, err
 	}
 
-	data := h.Item.(kms.KeyMetadata)
+	data := h.Item.(kms.DescribeKeyResponseBodyKeyMetadata)
 
-	request := kms.CreateListAliasesByKeyIdRequest()
-	request.Scheme = "https"
-	request.KeyId = data.KeyId
+	request := &kms.ListAliasesByKeyIdRequest{
+		KeyId: data.KeyId,
+	}
 	var response *kms.ListAliasesByKeyIdResponse
 
 	b := retry.NewFibonacci(100 * time.Millisecond)
@@ -357,24 +350,23 @@ func getKeyAlias(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData
 		var err error
 		response, err = client.ListAliasesByKeyId(request)
 		if err != nil {
-			if serverErr, ok := err.(*errors.ServerError); ok {
-				if serverErr.ErrorCode() == "Throttling" {
+			if serverErr, ok := err.(*tea.SDKError); ok {
+				if *serverErr.Code == "Throttling" {
 					return retry.RetryableError(err)
 				}
-				plugin.Logger(ctx).Error("alicloud_kms_key.getKeyAlias", "query_error", err, "request", request)
+				logQueryError(ctx, d, h, "alicloud_kms_key.getKeyAlias", err, "request", request)
 				return err
 			}
 		}
 		return nil
 	})
-
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_kms_key.getKeyAlias", "query_retry_error", err, "request", request)
 		return nil, err
 	}
 
-	if response.Aliases.Alias != nil {
-		return response.Aliases.Alias, nil
+	if response.Body.Aliases.Alias != nil {
+		return response.Body.Aliases.Alias, nil
 	}
 
 	return nil, nil
@@ -390,12 +382,12 @@ func getKeyTags(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData)
 		return nil, err
 	}
 
-	data := h.Item.(kms.KeyMetadata)
+	data := h.Item.(kms.DescribeKeyResponseBodyKeyMetadata)
 	var response *kms.ListResourceTagsResponse
 
-	request := kms.CreateListResourceTagsRequest()
-	request.Scheme = "https"
-	request.KeyId = data.KeyId
+	request := &kms.ListResourceTagsRequest{
+		KeyId: data.KeyId,
+	}
 
 	b := retry.NewFibonacci(100 * time.Millisecond)
 
@@ -403,17 +395,16 @@ func getKeyTags(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData)
 		var err error
 		response, err = client.ListResourceTags(request)
 		if err != nil {
-			if serverErr, ok := err.(*errors.ServerError); ok {
-				if serverErr.ErrorCode() == "Throttling" {
+			if serverErr, ok := err.(*tea.SDKError); ok {
+				if *serverErr.Code == "Throttling" {
 					return retry.RetryableError(err)
 				}
-				plugin.Logger(ctx).Error("alicloud_kms_key.getKeyTags", "query_error", err, "request", request)
+				logQueryError(ctx, d, h, "alicloud_kms_key.getKeyTags", err, "request", request)
 				return err
 			}
 		}
 		return nil
 	})
-
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_kms_key.getKeyTags", "query_retry_error", err, "request", request)
 		return nil, err
@@ -433,16 +424,16 @@ func getKmsKeyRegion(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrate
 
 func kmsKeyTitle(ctx context.Context, d *transform.TransformData) (interface{}, error) {
 	// Use the first alias if one is set, else fallback to the key ID
-	key := d.HydrateItem.([]kms.Alias)
+	key := d.HydrateItem.([]kms.ListAliasesResponseBodyAliasesAlias)
 	if len(key) > 0 {
-		return key[0].AliasName, nil
+		return *key[0].AliasName, nil
 	}
 
 	var keyID string
 	if d.HydrateResults["listKmsKey"] != nil {
-		keyID = (d.HydrateResults["listKmsKey"]).(kms.KeyMetadata).KeyId
+		keyID = *(d.HydrateResults["listKmsKey"]).(kms.DescribeKeyResponseBodyKeyMetadata).KeyId
 	} else if d.HydrateResults["getKmsKey"] != nil {
-		keyID = (d.HydrateResults["getKmsKey"]).(kms.KeyMetadata).KeyId
+		keyID = *(d.HydrateResults["getKmsKey"]).(kms.DescribeKeyResponseBodyKeyMetadata).KeyId
 	}
 
 	return keyID, nil

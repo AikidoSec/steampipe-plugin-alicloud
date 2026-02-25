@@ -3,8 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/cms"
+	cms "github.com/alibabacloud-go/cms-20190101/v10/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -140,29 +140,29 @@ func tableAlicloudCmsMonitorHost(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listCmsMonitorHosts(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listCmsMonitorHosts(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := CmsService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("listCmsMonitorHosts", "connection_error", err)
 		return nil, err
 	}
-	request := cms.CreateDescribeMonitoringAgentHostsRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &cms.DescribeMonitoringAgentHostsRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+	}
 
 	count := 0
 	for {
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeMonitoringAgentHosts(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("listCmsMonitorHosts", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "listCmsMonitorHosts", err, "request", request)
 			return nil, err
 		}
-		for _, host := range response.Hosts.Host {
+		for _, host := range response.Body.Hosts.Host {
 			plugin.Logger(ctx).Warn("listCmsMonitorHosts", "item", host)
-			d.StreamListItem(ctx, host)
+			d.StreamListItem(ctx, *host)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -170,10 +170,10 @@ func listCmsMonitorHosts(ctx context.Context, d *plugin.QueryData, _ *plugin.Hyd
 			}
 			count++
 		}
-		if count >= response.Total {
+		if count >= int(*response.Body.Total) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.SetPageNumber(*response.Body.PageNumber + 1)
 	}
 	return nil, nil
 }
@@ -197,18 +197,18 @@ func getCmsMonitorHost(ctx context.Context, d *plugin.QueryData, h *plugin.Hydra
 		return nil, nil
 	}
 
-	request := cms.CreateDescribeMonitoringAgentHostsRequest()
-	request.Scheme = "https"
-	request.HostName = hostName
-	request.InstanceIds = instanceId
+	request := &cms.DescribeMonitoringAgentHostsRequest{
+		HostName:    &hostName,
+		InstanceIds: &instanceId,
+	}
 
 	response, err := client.DescribeMonitoringAgentHosts(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("getCmsMonitorHost", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "getCmsMonitorHost", err, "request", request)
 		return nil, err
 	}
 
-	return response.Hosts.Host[0], nil
+	return *response.Body.Hosts.Host[0], nil
 }
 
 func getCmsMonitoringAgentStatus(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -221,25 +221,23 @@ func getCmsMonitoringAgentStatus(ctx context.Context, d *plugin.QueryData, h *pl
 		return nil, err
 	}
 
-	id := h.Item.(cms.Host).InstanceId
-
-	request := cms.CreateDescribeMonitoringAgentStatusesRequest()
-	request.Scheme = "https"
-	request.InstanceIds = id
+	request := &cms.DescribeMonitoringAgentStatusesRequest{
+		InstanceIds: h.Item.(cms.DescribeMonitoringAgentHostsResponseBodyHostsHost).InstanceId,
+	}
 
 	response, err := client.DescribeMonitoringAgentStatuses(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("getCmsMonitoringAgentStatus", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "getCmsMonitoringAgentStatus", err, "request", request)
 		return nil, err
 	}
 
-	return response.NodeStatusList.NodeStatus, nil
+	return response.Body.NodeStatusList.NodeStatus, nil
 }
 
 func getCmsMonitoringHostAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getCmsMonitoringHostAka")
 
-	data := h.Item.(cms.Host)
+	data := h.Item.(cms.DescribeMonitoringAgentHostsResponseBodyHostsHost)
 
 	// Get project details
 	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()
@@ -250,7 +248,7 @@ func getCmsMonitoringHostAka(ctx context.Context, d *plugin.QueryData, h *plugin
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	akas := []string{"arn:acs:cms:" + data.Region + ":" + accountID + ":host/" + data.HostName}
+	akas := []string{"arn:acs:cms:" + tea.StringValue(data.Region) + ":" + accountID + ":host/" + tea.StringValue(data.HostName)}
 
 	return akas, nil
 }

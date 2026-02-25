@@ -3,8 +3,6 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ram"
-
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
@@ -86,19 +84,17 @@ func tableAlicloudRAMSecurityPreference(_ context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listRAMSecurityPreference(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listRAMSecurityPreference(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	client, err := RAMService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("listRamSecurityPreference", "connection_error", err)
 		return nil, err
 	}
-	request := ram.CreateGetSecurityPreferenceRequest()
-	request.Scheme = "https"
-	response, err := client.GetSecurityPreference(request)
+	response, err := client.GetSecurityPreference()
 	if err != nil {
-		plugin.Logger(ctx).Error("listRamSecurityPreference", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "listRamSecurityPreference", err)
 		return nil, err
 	}
-	d.StreamListItem(ctx, response.SecurityPreference)
+	d.StreamListItem(ctx, *response.Body.SecurityPreference)
 	return nil, nil
 }

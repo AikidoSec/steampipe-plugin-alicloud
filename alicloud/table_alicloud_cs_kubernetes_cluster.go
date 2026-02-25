@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/cs"
+	cs "github.com/alibabacloud-go/cs-20151215/v7/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -352,7 +351,7 @@ func tableAlicloudCsKubernetesCluster(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listCsKubernetesClusters(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listCsKubernetesClusters(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	region := GetDefaultRegion(d.Connection)
 
 	// Create service connection
@@ -361,33 +360,34 @@ func listCsKubernetesClusters(ctx context.Context, d *plugin.QueryData, _ *plugi
 		plugin.Logger(ctx).Error("listCsKubernetesClusters", "connection_error", err)
 		return nil, err
 	}
-	request := cs.CreateDescribeClustersV1Request()
-	request.Scheme = "https"
-	request.QueryParams["RegionId"] = region
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &cs.DescribeClustersV1Request{
+		PageSize:   tea.Int64(50),
+		PageNumber: tea.Int64(1),
+		RegionId:   tea.String(region),
+	}
 
 	count := 0
 	for {
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeClustersV1(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("listCsKubernetesClusters", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "listCsKubernetesClusters", err, "request", request)
 			return nil, err
 		}
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(response.GetHttpContentString()), &result)
-		if err != nil {
-			plugin.Logger(ctx).Error("listCsKubernetesClusters", "json.unmarshal", err)
-			return nil, err
-		}
-		clusters := result["clusters"].([]interface{})
-		pageInfo := result["page_info"].(map[string]interface{})
-		TotalCount := pageInfo["total_count"].(float64)
-		PageNumber := pageInfo["page_number"].(float64)
-		for _, cluster := range clusters {
-			clusterAsMap := cluster.(map[string]interface{})
-			d.StreamListItem(ctx, clusterAsMap)
+
+		for _, cluster := range response.Body.Clusters {
+			// Convert v2 struct (with lowercase JSON tags) to map[string]interface{}
+			clusterBytes, err := json.Marshal(cluster)
+			if err != nil {
+				plugin.Logger(ctx).Error("listCsKubernetesClusters", "json.marshal", err)
+				return nil, err
+			}
+			var clusterMap map[string]interface{}
+			if err := json.Unmarshal(clusterBytes, &clusterMap); err != nil {
+				plugin.Logger(ctx).Error("listCsKubernetesClusters", "json.unmarshal", err)
+				return nil, err
+			}
+			d.StreamListItem(ctx, clusterMap)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -395,10 +395,14 @@ func listCsKubernetesClusters(ctx context.Context, d *plugin.QueryData, _ *plugi
 			}
 			count++
 		}
-		if count >= int(TotalCount) {
+
+		if response.Body.PageInfo == nil || response.Body.PageInfo.TotalCount == nil {
 			break
 		}
-		request.PageNumber = requests.NewInteger(int(PageNumber) + 1)
+		if count >= int(*response.Body.PageInfo.TotalCount) {
+			break
+		}
+		request.SetPageNumber(*request.PageNumber + 1)
 	}
 	return nil, nil
 }
@@ -423,28 +427,28 @@ func getCsKubernetesCluster(ctx context.Context, d *plugin.QueryData, h *plugin.
 		id = d.EqualsQuals["cluster_id"].GetStringValue()
 	}
 
-	request := cs.CreateDescribeClusterDetailRequest()
-	request.Scheme = "https"
-	request.ClusterId = id
-
-	response, err := client.DescribeClusterDetail(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("getCsKubernetesCluster", "query_error", serverErr, "request", request)
-		return nil, serverErr
-	}
-
-	if len(response.GetHttpContentString()) > 0 {
-		var cluster map[string]interface{}
-		err = json.Unmarshal([]byte(response.GetHttpContentString()), &cluster)
-		if err != nil {
-			plugin.Logger(ctx).Error("getCsKubernetesCluster", "json_unmarshal", err)
-			return nil, err
+	response, err := client.DescribeClusterDetail(&id)
+	if err != nil {
+		if serverErr, ok := err.(*tea.SDKError); ok {
+			logQueryError(ctx, d, h, "getCsKubernetesCluster", serverErr)
+			return nil, serverErr
 		}
-
-		return cluster, nil
+		return nil, err
 	}
 
-	return nil, nil
+	// Convert response body (with lowercase JSON tags) to map[string]interface{}
+	clusterBytes, err := json.Marshal(response.Body)
+	if err != nil {
+		plugin.Logger(ctx).Error("getCsKubernetesCluster", "json_marshal", err)
+		return nil, err
+	}
+	var cluster map[string]interface{}
+	if err := json.Unmarshal(clusterBytes, &cluster); err != nil {
+		plugin.Logger(ctx).Error("getCsKubernetesCluster", "json_unmarshal", err)
+		return nil, err
+	}
+
+	return cluster, nil
 }
 
 func getCsKubernetesClusterLog(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -459,18 +463,17 @@ func getCsKubernetesClusterLog(ctx context.Context, d *plugin.QueryData, h *plug
 
 	id := h.Item.(map[string]interface{})["cluster_id"].(string)
 
-	request := cs.CreateDescribeClusterLogsRequest()
-	request.Scheme = "https"
-	request.ClusterId = id
-
-	response, err := client.DescribeClusterLogs(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("getCsKubernetesClusterLog", "query_error", serverErr, "request", request)
-		return nil, serverErr
+	response, err := client.DescribeClusterLogs(&id)
+	if err != nil {
+		if serverErr, ok := err.(*tea.SDKError); ok {
+			logQueryError(ctx, d, h, "getCsKubernetesClusterLog", serverErr)
+			return nil, serverErr
+		}
+		return nil, err
 	}
 
-	if len(response.GetHttpContentString()) > 0 {
-		return response.GetHttpContentString(), nil
+	if len(response.Body) > 0 {
+		return response.Body, nil
 	}
 
 	return nil, nil
@@ -486,18 +489,12 @@ func getCsKubernetesClusterNamespace(ctx context.Context, d *plugin.QueryData, h
 		return nil, nil
 	}
 
-	request := requests.NewCommonRequest()
-	request.Scheme = "https"
-	request.Domain = "cs.aliyuncs.com"
-	request.Version = "2015-12-15"
-	request.PathPattern = "/k8s/" + id + "/namespaces"
-
-	response, err := client.ProcessCommonRequest(request)
+	response, err := client.DescribeUserClusterNamespaces(&id)
 	if err != nil {
 		return nil, nil
 	}
 
-	return response.GetHttpContentString(), nil
+	return response.Body, nil
 }
 
 func getCsKubernetesClusterARN(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -525,7 +522,7 @@ func csKubernetesClusterAkaTagsToMap(_ context.Context, d *transform.TransformDa
 	if d.Value == nil {
 		return nil, nil
 	}
-	
+
 	tags := d.Value.([]interface{})
 
 	turbotTagsMap := map[string]string{}

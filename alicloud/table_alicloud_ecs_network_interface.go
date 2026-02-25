@@ -3,13 +3,11 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
+	ecs "github.com/alibabacloud-go/ecs-20140526/v7/client"
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
-
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
 )
 
 //// TABLE DEFINITION
@@ -156,7 +154,7 @@ func tableAlicloudEcsEni(ctx context.Context) *plugin.Table {
 				Name:        "tags_src",
 				Description: "A list of tags attached with the resource.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(modifyEcsSourceTags),
+				Transform:   transform.FromField("Tags.Tag").Transform(modifyGenericSourceTags),
 			},
 
 			// steampipe standard columns
@@ -164,7 +162,7 @@ func tableAlicloudEcsEni(ctx context.Context) *plugin.Table {
 				Name:        "tags",
 				Description: ColumnDescriptionTags,
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(ecsTagsToMap),
+				Transform:   transform.FromField("Tags.Tag").Transform(genericTagsToMap),
 			},
 			{
 				Name:        "akas",
@@ -198,28 +196,24 @@ func tableAlicloudEcsEni(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listEcsEni(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listEcsEni(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := ECSService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_ecs_network_interface.listEcsEni", "connection_error", err)
 		return nil, err
 	}
-	request := ecs.CreateDescribeNetworkInterfacesRequest()
-	request.Scheme = "https"
-	request.MaxResults = requests.NewInteger(100)
+	request := &ecs.DescribeNetworkInterfacesRequest{
+		MaxResults: tea.Int32(100),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	// If the request no of items is less than the paging max limit
 	// update limit to the requested no of results.
 	limit := d.QueryContext.Limit
 	if d.QueryContext.Limit != nil {
-		maxResults, err := request.MaxResults.GetValue64()
-		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_network_interface.listEcsEni", "max_results_error", err)
-			return nil, err
-		}
-		if *limit < maxResults {
-			request.MaxResults = requests.NewInteger(int(*limit))
+		if *limit < int64(*request.MaxResults) {
+			request.MaxResults = tea.Int32(int32(*limit))
 		}
 	}
 
@@ -228,19 +222,19 @@ func listEcsEni(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData)
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeNetworkInterfaces(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_network_interface.listEcsEni", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_ecs_network_interface.listEcsEni", err, "request", request)
 			return nil, err
 		}
-		for _, eni := range response.NetworkInterfaceSets.NetworkInterfaceSet {
-			d.StreamListItem(ctx, eni)
+		for _, eni := range response.Body.NetworkInterfaceSets.NetworkInterfaceSet {
+			d.StreamListItem(ctx, *eni)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
 			}
 		}
-		if response.NextToken != "" {
-			request.NextToken = response.NextToken
+		if tea.StringValue(response.Body.NextToken) != "" {
+			request.NextToken = response.Body.NextToken
 		} else {
 			pageLeft = false
 		}
@@ -250,7 +244,7 @@ func listEcsEni(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData)
 
 //// HYDRATE FUNCTIONS
 
-func getEcsEni(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func getEcsEni(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsEni")
 
 	// Create service connection
@@ -261,18 +255,18 @@ func getEcsEni(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) 
 	}
 	id := d.EqualsQuals["network_interface_id"].GetStringValue()
 
-	request := ecs.CreateDescribeNetworkInterfacesRequest()
-	request.Scheme = "https"
-	request.NetworkInterfaceId = &[]string{id}
+	request := &ecs.DescribeNetworkInterfacesRequest{
+		NetworkInterfaceId: []*string{&id},
+	}
 
 	response, err := client.DescribeNetworkInterfaces(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ecs_network_interface.getEcsEni", "query_error", serverErr, "request", request)
+	if serverErr, ok := err.(*tea.SDKError); ok {
+		logQueryError(ctx, d, h, "alicloud_ecs_network_interface.getEcsEni", serverErr, "request", request)
 		return nil, serverErr
 	}
 
-	if len(response.NetworkInterfaceSets.NetworkInterfaceSet) > 0 {
-		return response.NetworkInterfaceSets.NetworkInterfaceSet[0], nil
+	if len(response.Body.NetworkInterfaceSets.NetworkInterfaceSet) > 0 {
+		return *response.Body.NetworkInterfaceSets.NetworkInterfaceSet[0], nil
 	}
 
 	return nil, nil
@@ -281,20 +275,20 @@ func getEcsEni(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) 
 //// TRANSFORM FUNCTIONS
 
 func ecsEniAka(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	eni := d.HydrateItem.(ecs.NetworkInterfaceSet)
-	akas := []string{"acs:ecs:" + eni.ZoneId + ":" + eni.OwnerId + ":eni/" + eni.NetworkInterfaceId}
+	eni := d.HydrateItem.(ecs.DescribeNetworkInterfacesResponseBodyNetworkInterfaceSetsNetworkInterfaceSet)
+	akas := []string{"acs:ecs:" + tea.StringValue(eni.ZoneId) + ":" + tea.StringValue(eni.OwnerId) + ":eni/" + tea.StringValue(eni.NetworkInterfaceId)}
 
 	return akas, nil
 }
 
 func ecsEniTitle(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	eni := d.HydrateItem.(ecs.NetworkInterfaceSet)
+	eni := d.HydrateItem.(ecs.DescribeNetworkInterfacesResponseBodyNetworkInterfaceSetsNetworkInterfaceSet)
 
 	// Build resource title
-	title := eni.NetworkInterfaceId
+	title := tea.StringValue(eni.NetworkInterfaceId)
 
-	if len(eni.NetworkInterfaceName) > 0 {
-		title = eni.NetworkInterfaceName
+	if len(tea.StringValue(eni.NetworkInterfaceName)) > 0 {
+		title = tea.StringValue(eni.NetworkInterfaceName)
 	}
 
 	return title, nil

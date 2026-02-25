@@ -3,7 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
+	ecs "github.com/alibabacloud-go/ecs-20140526/v7/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -72,7 +73,7 @@ func tableAlicloudEcsRegion(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listEcsRegions(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listEcsRegions(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	region := GetDefaultRegion(d.Connection)
 
 	// Create service connection
@@ -81,17 +82,17 @@ func listEcsRegions(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateD
 		plugin.Logger(ctx).Error("alicloud_ecs.listEcsRegions", "connection_error", err)
 		return nil, err
 	}
-	request := ecs.CreateDescribeRegionsRequest()
-	request.Scheme = "https"
-	request.AcceptLanguage = "en-US"
+	request := &ecs.DescribeRegionsRequest{
+		AcceptLanguage: tea.String("en-US"),
+	}
 
 	response, err := client.DescribeRegions(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_ecs.listEcsRegions", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_ecs.listEcsRegions", err, "request", request)
 		return nil, err
 	}
-	for _, i := range response.Regions.Region {
-		d.StreamListItem(ctx, i)
+	for _, i := range response.Body.Regions.Region {
+		d.StreamListItem(ctx, *i)
 		// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 		// if there is a limit, it will return the number of rows required to reach this limit
 		if d.RowsRemaining(ctx) == 0 {
@@ -103,7 +104,7 @@ func listEcsRegions(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateD
 
 func getRegionAkas(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getRegionAkas")
-	data := h.Item.(ecs.Region)
+	data := h.Item.(ecs.DescribeRegionsResponseBodyRegionsRegion)
 
 	// Get project details
 	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()
@@ -114,5 +115,5 @@ func getRegionAkas(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	return []string{"acs:ecs::" + accountID + ":region/" + data.RegionId}, nil
+	return []string{"acs:ecs::" + accountID + ":region/" + tea.StringValue(data.RegionId)}, nil
 }

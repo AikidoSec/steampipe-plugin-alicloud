@@ -7,8 +7,8 @@ import (
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/vpc"
+	"github.com/alibabacloud-go/tea/tea"
+	vpc "github.com/alibabacloud-go/vpc-20160428/v7/client"
 )
 
 //// TABLE DEFINITION
@@ -131,7 +131,7 @@ func tableAlicloudVpcDhcpOptionsSet(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listVpcDhcpOptionsSets(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listVpcDhcpOptionsSets(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := VpcService(ctx, d)
 	if err != nil {
@@ -139,15 +139,16 @@ func listVpcDhcpOptionsSets(ctx context.Context, d *plugin.QueryData, _ *plugin.
 		return nil, err
 	}
 
-	request := vpc.CreateListDhcpOptionsSetsRequest()
-	request.Scheme = "https"
-	request.MaxResults = requests.NewInteger(100)
+	request := &vpc.ListDhcpOptionsSetsRequest{
+		MaxResults: tea.Int32(100),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	if d.EqualsQualString("name") != "" {
-		request.DhcpOptionsSetName = d.EqualsQualString("name")
+		request.DhcpOptionsSetName = tea.String(d.EqualsQualString("name"))
 	}
 	if d.EqualsQualString("domain_name") != "" {
-		request.DomainName = d.EqualsQualString("domain_name")
+		request.DomainName = tea.String(d.EqualsQualString("domain_name"))
 	}
 
 	// Limiting the results
@@ -155,9 +156,9 @@ func listVpcDhcpOptionsSets(ctx context.Context, d *plugin.QueryData, _ *plugin.
 	if d.QueryContext.Limit != nil {
 		if *limit < 100 {
 			if *limit < 1 {
-				request.MaxResults = requests.NewInteger(1)
+				request.MaxResults = tea.Int32(1)
 			} else {
-				request.MaxResults = requests.NewInteger(int(*limit))
+				request.MaxResults = tea.Int32(int32(*limit))
 			}
 		}
 	}
@@ -167,12 +168,12 @@ func listVpcDhcpOptionsSets(ctx context.Context, d *plugin.QueryData, _ *plugin.
 		d.WaitForListRateLimit(ctx)
 		response, err := client.ListDhcpOptionsSets(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_vpc_dhcp_options_set.listVpcDhcpOptionsSets", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_vpc_dhcp_options_set.listVpcDhcpOptionsSets", err, "request", request)
 			return nil, err
 		}
 
-		for _, dhcpOptionSet := range response.DhcpOptionsSets {
-			d.StreamListItem(ctx, dhcpOptionSet)
+		for _, dhcpOptionSet := range response.Body.DhcpOptionsSets {
+			d.StreamListItem(ctx, *dhcpOptionSet)
 
 			// Context can be cancelled due to manual cancellation or the limit has been hit
 			if d.RowsRemaining(ctx) == 0 {
@@ -180,8 +181,8 @@ func listVpcDhcpOptionsSets(ctx context.Context, d *plugin.QueryData, _ *plugin.
 			}
 		}
 
-		if response.NextToken != "" {
-			request.NextToken = response.NextToken
+		if tea.StringValue(response.Body.NextToken) != "" {
+			request.NextToken = response.Body.NextToken
 		} else {
 			pageLeft = false
 		}
@@ -202,23 +203,23 @@ func getVpcDhcpOptionsSet(ctx context.Context, d *plugin.QueryData, h *plugin.Hy
 		return nil, err
 	}
 
-	var id string
+	var id *string
 	if h.Item != nil {
-		id = h.Item.(vpc.DhcpOptionsSet).DhcpOptionsSetId
+		id = h.Item.(vpc.ListDhcpOptionsSetsResponseBodyDhcpOptionsSets).DhcpOptionsSetId
 	} else {
-		id = d.EqualsQuals["dhcp_options_set_id"].GetStringValue()
+		id = tea.String(d.EqualsQuals["dhcp_options_set_id"].GetStringValue())
 	}
 
-	request := vpc.CreateGetDhcpOptionsSetRequest()
-	request.Scheme = "https"
-	request.DhcpOptionsSetId = id
+	request := &vpc.GetDhcpOptionsSetRequest{
+		DhcpOptionsSetId: id,
+	}
 
 	response, err := client.GetDhcpOptionsSet(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_vpc_dhcp_options_set.getVpcDhcpOptionsSet", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_vpc_dhcp_options_set.getVpcDhcpOptionsSet", err, "request", request)
 		return nil, nil
 	}
-	if response.DhcpOptionsSetId != "" {
+	if tea.StringValue(response.Body.DhcpOptionsSetId) != "" {
 		return response, nil
 	}
 
@@ -233,9 +234,9 @@ func getVpcDhcpOptionSetAka(ctx context.Context, d *plugin.QueryData, h *plugin.
 
 	switch item := h.Item.(type) {
 	case *vpc.GetDhcpOptionsSetResponse:
-		id = item.DhcpOptionsSetId
-	case vpc.DhcpOptionsSet:
-		id = item.DhcpOptionsSetId
+		id = *item.Body.DhcpOptionsSetId
+	case vpc.ListDhcpOptionsSetsResponseBodyDhcpOptionsSets:
+		id = *item.DhcpOptionsSetId
 	}
 
 	// Get project details

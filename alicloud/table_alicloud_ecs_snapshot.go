@@ -3,10 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
-
+	ecs "github.com/alibabacloud-go/ecs-20140526/v7/client"
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
@@ -149,7 +147,7 @@ func tableAlicloudEcsSnapshot(ctx context.Context) *plugin.Table {
 				Name:        "tags_src",
 				Description: "A list of tags attached with the resource.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(modifyEcsSourceTags),
+				Transform:   transform.FromField("Tags.Tag").Transform(modifyGenericSourceTags),
 			},
 
 			// Steampipe standard columns
@@ -157,7 +155,7 @@ func tableAlicloudEcsSnapshot(ctx context.Context) *plugin.Table {
 				Name:        "tags",
 				Description: ColumnDescriptionTags,
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(ecsTagsToMap),
+				Transform:   transform.FromField("Tags.Tag").Transform(genericTagsToMap),
 			},
 			{
 				Name:        "akas",
@@ -195,29 +193,24 @@ func tableAlicloudEcsSnapshot(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listEcsSnapshot(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listEcsSnapshot(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := ECSService(ctx, d)
-
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_ecs_snapshot.listEcsSnapshot", "connection_error", err)
 		return nil, err
 	}
-	request := ecs.CreateDescribeSnapshotsRequest()
-	request.Scheme = "https"
-	request.MaxResults = requests.NewInteger(100)
+	request := &ecs.DescribeSnapshotsRequest{
+		MaxResults: tea.Int32(100),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	// If the request no of items is less than the paging max limit
 	// update limit to the requested no of results.
 	limit := d.QueryContext.Limit
 	if d.QueryContext.Limit != nil {
-		maxResults, err := request.MaxResults.GetValue64()
-		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_snapshot.listEcsSnapshot", "max_results_error", err)
-			return nil, err
-		}
-		if *limit < maxResults {
-			request.MaxResults = requests.NewInteger(int(*limit))
+		if *limit < int64(tea.Int32Value(request.MaxResults)) {
+			request.MaxResults = tea.Int32(int32(*limit))
 		}
 	}
 
@@ -226,10 +219,10 @@ func listEcsSnapshot(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrate
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeSnapshots(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_snapshot.listEcsSnapshot", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_ecs_snapshot.listEcsSnapshot", err, "request", request)
 			return nil, err
 		}
-		for _, snapshot := range response.Snapshots.Snapshot {
+		for _, snapshot := range response.Body.Snapshots.Snapshot {
 			plugin.Logger(ctx).Warn("listEcsSnapshot", "item", snapshot)
 			d.StreamListItem(ctx, snapshot)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
@@ -238,8 +231,8 @@ func listEcsSnapshot(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrate
 				return nil, nil
 			}
 		}
-		if response.NextToken != "" {
-			request.NextToken = response.NextToken
+		if tea.StringValue(response.Body.NextToken) != "" {
+			request.NextToken = response.Body.NextToken
 		} else {
 			pageLeft = false
 		}
@@ -259,26 +252,26 @@ func getEcsSnapshot(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateD
 		return nil, err
 	}
 
-	var name string
+	var name *string
 	if h.Item != nil {
-		snapshot := h.Item.(ecs.Snapshot)
+		snapshot := h.Item.(ecs.DescribeSnapshotsResponseBodySnapshotsSnapshot)
 		name = snapshot.SnapshotName
 	} else {
-		name = d.EqualsQuals["name"].GetStringValue()
+		name = tea.String(d.EqualsQuals["name"].GetStringValue())
 	}
 
-	request := ecs.CreateDescribeSnapshotsRequest()
-	request.Scheme = "https"
-	request.SnapshotName = name
+	request := &ecs.DescribeSnapshotsRequest{
+		SnapshotName: name,
+	}
 
 	response, err := client.DescribeSnapshots(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ecs_snapshot.getEcsSnapshot", "query_error", serverErr, "request", request)
+	if serverErr, ok := err.(*tea.SDKError); ok {
+		logQueryError(ctx, d, h, "alicloud_ecs_snapshot.getEcsSnapshot", serverErr, "request", request)
 		return nil, serverErr
 	}
 
-	if len(response.Snapshots.Snapshot) > 0 {
-		return response.Snapshots.Snapshot[0], nil
+	if len(response.Body.Snapshots.Snapshot) > 0 {
+		return *response.Body.Snapshots.Snapshot[0], nil
 	}
 
 	return nil, nil
@@ -286,7 +279,7 @@ func getEcsSnapshot(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateD
 
 func getEcsSnapshotArn(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsSnapshotArn")
-	data := h.Item.(ecs.Snapshot)
+	data := h.Item.(ecs.DescribeSnapshotsResponseBodySnapshotsSnapshot)
 	region := d.EqualsQualString(matrixKeyRegion)
 
 	// Get account details
@@ -297,7 +290,7 @@ func getEcsSnapshotArn(ctx context.Context, d *plugin.QueryData, h *plugin.Hydra
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	arn := "arn:acs:ecs:" + region + ":" + accountID + ":snapshot/" + data.SnapshotId
+	arn := "arn:acs:ecs:" + region + ":" + accountID + ":snapshot/" + tea.StringValue(data.SnapshotId)
 
 	return arn, nil
 }

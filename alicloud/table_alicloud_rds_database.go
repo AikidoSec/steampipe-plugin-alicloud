@@ -3,8 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/rds"
+	rds "github.com/alibabacloud-go/rds-20140815/v16/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -114,9 +114,9 @@ func tableAlicloudRdsDatabase(ctx context.Context) *plugin.Table {
 
 func listRdsdatabases(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	region := d.EqualsQualString(matrixKeyRegion)
-	dbInstance := h.Item.(rds.DBInstance)
+	dbInstance := h.Item.(rds.DescribeDatabasesResponseBodyDatabasesDatabase)
 	if d.EqualsQualString("db_instance_id") != "" {
-		if d.EqualsQualString("db_instance_id") != dbInstance.DBInstanceId {
+		if d.EqualsQualString("db_instance_id") != tea.StringValue(dbInstance.DBInstanceId) {
 			return nil, nil
 		}
 	}
@@ -127,35 +127,35 @@ func listRdsdatabases(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrat
 		plugin.Logger(ctx).Error("alicloud_rds_database.listRdsdatabases", "connection_error", err)
 		return nil, err
 	}
-	request := rds.CreateDescribeDatabasesRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(100)
-	request.PageNumber = requests.NewInteger(1)
-	request.DBInstanceId = dbInstance.DBInstanceId
+	request := &rds.DescribeDatabasesRequest{
+		PageSize:     tea.Int32(100),
+		PageNumber:   tea.Int32(1),
+		DBInstanceId: dbInstance.DBInstanceId,
+	}
 
 	if d.EqualsQualString("db_name") != "" {
-		request.DBName = d.EqualsQualString("db_name")
+		request.DBName = tea.String(d.EqualsQualString("db_name"))
 	}
 	if d.EqualsQualString("db_status") != "" {
-		request.DBStatus = d.EqualsQualString("db_status")
+		request.DBStatus = tea.String(d.EqualsQualString("db_status"))
 	}
 
 	for {
 		response, err := client.DescribeDatabases(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_rds_database.listRdsdatabases", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_rds_database.listRdsdatabases", err, "request", request)
 			return nil, err
 		}
 
 		// Response body doesn't contain record count and page number details, so we need to handle it manually
-		if len(response.Databases.Database) > 0 {
-			request.PageNumber = request.PageNumber + requests.NewInteger(1)
+		if len(response.Body.Databases.Database) > 0 {
+			request.PageNumber = tea.Int32(*request.PageNumber + int32(1))
 		} else {
 			break
 		}
 
-		for _, i := range response.Databases.Database {
-			d.StreamListItem(ctx, i)
+		for _, i := range response.Body.Databases.Database {
+			d.StreamListItem(ctx, *i)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {

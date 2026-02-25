@@ -3,12 +3,12 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/vpc"
+	"github.com/alibabacloud-go/tea/tea"
+	vpc "github.com/alibabacloud-go/vpc-20160428/v7/client"
 )
 
 //// TABLE DEFINITION
@@ -155,28 +155,29 @@ func tableAlicloudVpcVpnConnection(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listVpcVpnConnections(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listVpcVpnConnections(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := VpcService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_vpc_vpn_connection.listVpcVpnConnections", "connection_error", err)
 		return nil, err
 	}
-	request := vpc.CreateDescribeVpnConnectionsRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &vpc.DescribeVpnConnectionsRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	count := 0
 	for {
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeVpnConnections(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_vpc_vpn_connection.listVpcVpnConnections", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_vpc_vpn_connection.listVpcVpnConnections", err, "request", request)
 			return nil, err
 		}
-		for _, vpnConnection := range response.VpnConnections.VpnConnection {
-			d.StreamListItem(ctx, vpnConnection)
+		for _, vpnConnection := range response.Body.VpnConnections.VpnConnection {
+			d.StreamListItem(ctx, *vpnConnection)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -184,10 +185,10 @@ func listVpcVpnConnections(ctx context.Context, d *plugin.QueryData, _ *plugin.H
 			}
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(tea.Int32Value(response.Body.TotalCount)) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(tea.Int32Value(response.Body.PageNumber) + 1)
 	}
 	return nil, nil
 }
@@ -204,25 +205,25 @@ func getVpcVpnConnection(ctx context.Context, d *plugin.QueryData, h *plugin.Hyd
 		return nil, err
 	}
 
-	var id string
+	var id *string
 	if h.Item != nil {
-		data := h.Item.(vpc.VpnConnection)
+		data := h.Item.(vpc.DescribeVpnConnectionsResponseBodyVpnConnectionsVpnConnection)
 		id = data.VpnConnectionId
 	} else {
-		id = d.EqualsQuals["vpn_connection_id"].GetStringValue()
+		id = tea.String(d.EqualsQuals["vpn_connection_id"].GetStringValue())
 	}
 
-	request := vpc.CreateDescribeVpnConnectionsRequest()
-	request.Scheme = "https"
-	request.VpnConnectionId = id
+	request := &vpc.DescribeVpnConnectionsRequest{
+		VpnConnectionId: id,
+	}
 
 	response, err := client.DescribeVpnConnections(request)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(response.VpnConnections.VpnConnection) > 0 {
-		return response.VpnConnections.VpnConnection[0], nil
+	if len(response.Body.VpnConnections.VpnConnection) > 0 {
+		return *response.Body.VpnConnections.VpnConnection[0], nil
 	}
 
 	return nil, nil
@@ -230,7 +231,7 @@ func getVpcVpnConnection(ctx context.Context, d *plugin.QueryData, h *plugin.Hyd
 
 func getVpnConnectionAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getVpnConnectionAka")
-	data := h.Item.(vpc.VpnConnection)
+	data := h.Item.(vpc.DescribeVpnConnectionsResponseBodyVpnConnectionsVpnConnection)
 	region := d.EqualsQualString(matrixKeyRegion)
 
 	// Get project details
@@ -242,7 +243,7 @@ func getVpnConnectionAka(ctx context.Context, d *plugin.QueryData, h *plugin.Hyd
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	akas := []string{"arn:acs:vpc:" + region + ":" + accountID + ":vpnconnection/" + data.VpnConnectionId}
+	akas := []string{"arn:acs:vpc:" + region + ":" + accountID + ":vpnconnection/" + tea.StringValue(data.VpnConnectionId)}
 
 	return akas, nil
 }
@@ -257,13 +258,13 @@ func getVpnConnectionRegion(ctx context.Context, d *plugin.QueryData, h *plugin.
 //// TRANSFORM FUNCTIONS
 
 func vpnConnectionTitle(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	data := d.HydrateItem.(vpc.VpnConnection)
+	data := d.HydrateItem.(vpc.DescribeVpnConnectionsResponseBodyVpnConnectionsVpnConnection)
 
 	// Build resource title
-	title := data.VpnConnectionId
+	title := tea.StringValue(data.VpnConnectionId)
 
-	if len(data.Name) > 0 {
-		title = data.Name
+	if len(tea.StringValue(data.Name)) > 0 {
+		title = tea.StringValue(data.Name)
 	}
 
 	return title, nil

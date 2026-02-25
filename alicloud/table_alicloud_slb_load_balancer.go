@@ -4,9 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/slb"
+	slb "github.com/alibabacloud-go/slb-20140515/v4/client"
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/sethvargo/go-retry"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
@@ -214,40 +213,41 @@ func listSlbLoadBalancers(ctx context.Context, d *plugin.QueryData, _ *plugin.Hy
 		}
 	}
 
-	request := slb.CreateDescribeLoadBalancersRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(int(maxLimit))
-	request.PageNumber = requests.NewInteger(1)
+	request := &slb.DescribeLoadBalancersRequest{
+		PageSize:   &maxLimit,
+		PageNumber: tea.Int32(1),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	if d.EqualsQualString("load_balancer_name") != "" {
-		request.LoadBalancerName = d.EqualsQualString("load_balancer_name")
+		request.LoadBalancerName = tea.String(d.EqualsQualString("load_balancer_name"))
 	}
 	if d.EqualsQualString("network_type") != "" {
-		request.NetworkType = d.EqualsQualString("network_type")
+		request.NetworkType = tea.String(d.EqualsQualString("network_type"))
 	}
 	if d.EqualsQualString("resource_group_id") != "" {
-		request.ResourceGroupId = d.EqualsQualString("resource_group_id")
+		request.ResourceGroupId = tea.String(d.EqualsQualString("resource_group_id"))
 	}
 	if d.EqualsQualString("master_zone_id") != "" {
-		request.MasterZoneId = d.EqualsQualString("master_zone_id")
+		request.MasterZoneId = tea.String(d.EqualsQualString("master_zone_id"))
 	}
 	if d.EqualsQualString("address_ip_version") != "" {
-		request.AddressIPVersion = d.EqualsQualString("address_ip_version")
+		request.AddressIPVersion = tea.String(d.EqualsQualString("address_ip_version"))
 	}
 	if d.EqualsQualString("v_switch_id") != "" {
-		request.VSwitchId = d.EqualsQualString("v_switch_id")
+		request.VSwitchId = tea.String(d.EqualsQualString("v_switch_id"))
 	}
 	if d.EqualsQualString("vpc_id") != "" {
-		request.VpcId = d.EqualsQualString("vpc_id")
+		request.VpcId = tea.String(d.EqualsQualString("vpc_id"))
 	}
 	if d.EqualsQualString("load_balancer_status") != "" {
-		request.LoadBalancerStatus = d.EqualsQualString("load_balancer_status")
+		request.LoadBalancerStatus = tea.String(d.EqualsQualString("load_balancer_status"))
 	}
 	if d.EqualsQualString("address_type") != "" {
-		request.AddressType = d.EqualsQualString("address_type")
+		request.AddressType = tea.String(d.EqualsQualString("address_type"))
 	}
 	if d.EqualsQualString("internet_charge_type") != "" {
-		request.InternetChargeType = d.EqualsQualString("internet_charge_type")
+		request.InternetChargeType = tea.String(d.EqualsQualString("internet_charge_type"))
 	}
 
 	count := 0
@@ -258,8 +258,8 @@ func listSlbLoadBalancers(ctx context.Context, d *plugin.QueryData, _ *plugin.Hy
 			plugin.Logger(ctx).Error("alicloud_slb_load_balancer.listSlbLoadBalancers", "api_error", err, "request", request)
 			return nil, err
 		}
-		for _, loadBalancer := range response.LoadBalancers.LoadBalancer {
-			d.StreamListItem(ctx, loadBalancer)
+		for _, loadBalancer := range response.Body.LoadBalancers.LoadBalancer {
+			d.StreamListItem(ctx, *loadBalancer)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -267,10 +267,10 @@ func listSlbLoadBalancers(ctx context.Context, d *plugin.QueryData, _ *plugin.Hy
 			}
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(tea.Int32Value(response.Body.TotalCount)) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(tea.Int32Value(response.Body.PageNumber) + 1)
 	}
 
 	return nil, nil
@@ -295,9 +295,9 @@ func getSlbLoadBalancer(ctx context.Context, d *plugin.QueryData, h *plugin.Hydr
 		return nil, nil
 	}
 
-	request := slb.CreateDescribeLoadBalancersRequest()
-	request.Scheme = "https"
-	request.LoadBalancerId = id
+	request := &slb.DescribeLoadBalancersRequest{
+		LoadBalancerId: &id,
+	}
 	var response *slb.DescribeLoadBalancersResponse
 
 	b := retry.NewFibonacci(100 * time.Millisecond)
@@ -306,8 +306,8 @@ func getSlbLoadBalancer(ctx context.Context, d *plugin.QueryData, h *plugin.Hydr
 		var err error
 		response, err = client.DescribeLoadBalancers(request)
 		if err != nil {
-			if serverErr, ok := err.(*errors.ServerError); ok {
-				if serverErr.ErrorCode() == "Throttling" {
+			if serverErr, ok := err.(*tea.SDKError); ok {
+				if *serverErr.Code == "Throttling" {
 					return retry.RetryableError(err)
 				}
 				return err
@@ -316,14 +316,13 @@ func getSlbLoadBalancer(ctx context.Context, d *plugin.QueryData, h *plugin.Hydr
 		}
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
 
-	if len(response.LoadBalancers.LoadBalancer) > 0 {
-		if response.LoadBalancers.LoadBalancer[0].RegionId == region {
-			return response.LoadBalancers.LoadBalancer[0], nil
+	if len(response.Body.LoadBalancers.LoadBalancer) > 0 {
+		if tea.StringValue(response.Body.LoadBalancers.LoadBalancer[0].RegionId) == region {
+			return *response.Body.LoadBalancers.LoadBalancer[0], nil
 		}
 	}
 
@@ -333,7 +332,7 @@ func getSlbLoadBalancer(ctx context.Context, d *plugin.QueryData, h *plugin.Hydr
 //// TRANSFORM FUNCTIONS
 
 func slbLoadbalancerTagMap(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	tags := d.HydrateItem.(slb.LoadBalancer).Tags
+	tags := d.HydrateItem.(slb.DescribeLoadBalancersResponseBodyLoadBalancersLoadBalancer).Tags
 	if tags.Tag == nil {
 		return nil, nil
 	}
@@ -343,7 +342,7 @@ func slbLoadbalancerTagMap(_ context.Context, d *transform.TransformData) (inter
 	}
 	turbotTagsMap := map[string]string{}
 	for _, i := range tags.Tag {
-		turbotTagsMap[i.TagKey] = i.TagValue
+		turbotTagsMap[tea.StringValue(i.TagKey)] = tea.StringValue(i.TagValue)
 	}
 
 	return turbotTagsMap, nil

@@ -5,9 +5,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ram"
+	ram "github.com/alibabacloud-go/ram-20150501/v2/client"
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/sethvargo/go-retry"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
@@ -137,12 +136,12 @@ func listRAMPolicies(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrate
 		plugin.Logger(ctx).Error("listRAMPolicies", "connection_error", err)
 		return nil, err
 	}
-	request := ram.CreateListPoliciesRequest()
-	request.Scheme = "https"
-	request.MaxItems = requests.NewInteger(1000)
+	request := &ram.ListPoliciesRequest{
+		MaxItems: tea.Int32(1000),
+	}
 
 	if value, ok := GetStringQualValue(d.Quals, "policy_type"); ok {
-		request.PolicyType = *value
+		request.PolicyType = value
 
 		// select policy_name, policy_type from alicloud.alicloud_ram_policy where policy_type = 'Custom1'
 		// Message: PolicyType must be Custom/System but meet:Custom1
@@ -155,13 +154,8 @@ func listRAMPolicies(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrate
 	// update limit to requested no of results.
 	limit := d.QueryContext.Limit
 	if d.QueryContext.Limit != nil {
-		pageSize, err := request.MaxItems.GetValue64()
-		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_instance.listEcsInstance", "page_size_error", err)
-			return nil, err
-		}
-		if *limit < pageSize {
-			request.MaxItems = requests.NewInteger(int(*limit))
+		if *limit < int64(*request.MaxItems) {
+			request.MaxItems = tea.Int32(int32(*limit))
 		}
 	}
 
@@ -169,21 +163,21 @@ func listRAMPolicies(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrate
 		// https://partners-intl.aliyun.com/help/doc-detail/28719.htm?spm=a2c63.p38356.b99.249.37d17aa2AscMLc
 		response, err := client.ListPolicies(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("listRAMPolicies", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "listRAMPolicies", err, "request", request)
 			return nil, err
 		}
-		for _, policy := range response.Policies.Policy {
-			d.StreamListItem(ctx, policy)
+		for _, policy := range response.Body.Policies.Policy {
+			d.StreamListItem(ctx, *policy)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
 			}
 		}
-		if !response.IsTruncated {
+		if !tea.BoolValue(response.Body.IsTruncated) {
 			break
 		}
-		request.Marker = response.Marker
+		request.Marker = response.Body.Marker
 	}
 	return nil, nil
 }
@@ -198,20 +192,20 @@ func getRAMPolicy(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDat
 		return nil, err
 	}
 
-	var name, policyType string
+	var name, policyType *string
 	if h.Item != nil {
-		i := h.Item.(ram.Policy)
+		i := h.Item.(ram.ListPoliciesResponseBodyPoliciesPolicy)
 		name = i.PolicyName
 		policyType = i.PolicyType
 	} else {
-		name = d.EqualsQuals["policy_name"].GetStringValue()
-		policyType = d.EqualsQuals["policy_type"].GetStringValue()
+		name = tea.String(d.EqualsQuals["policy_name"].GetStringValue())
+		policyType = tea.String(d.EqualsQuals["policy_type"].GetStringValue())
 	}
 
-	request := ram.CreateGetPolicyRequest()
-	request.Scheme = "https"
-	request.PolicyName = name
-	request.PolicyType = policyType
+	request := &ram.GetPolicyRequest{
+		PolicyName: name,
+		PolicyType: policyType,
+	}
 	var response *ram.GetPolicyResponse
 
 	b := retry.NewFibonacci(100 * time.Millisecond)
@@ -220,8 +214,8 @@ func getRAMPolicy(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDat
 		var err error
 		response, err = client.GetPolicy(request)
 		if err != nil {
-			if serverErr, ok := err.(*errors.ServerError); ok {
-				if serverErr.ErrorCode() == "Throttling.User" {
+			if serverErr, ok := err.(*tea.SDKError); ok {
+				if *serverErr.Code == "Throttling.User" {
 					return retry.RetryableError(err)
 				}
 				return err
@@ -229,12 +223,11 @@ func getRAMPolicy(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDat
 		}
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
 
-	if response != nil && len(response.Policy.PolicyName) > 0 {
+	if response != nil && len(tea.StringValue(response.Body.Policy.PolicyName)) > 0 {
 		return response, nil
 	}
 
@@ -259,10 +252,10 @@ func getPolicyAkas(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 
 func policyName(item interface{}) string {
 	switch item := item.(type) {
-	case ram.Policy:
-		return item.PolicyName
+	case ram.ListPoliciesResponseBodyPoliciesPolicy:
+		return *item.PolicyName
 	case *ram.GetPolicyResponse:
-		return item.Policy.PolicyName
+		return *item.Body.Policy.PolicyName
 	}
 	return ""
 }

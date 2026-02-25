@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
+	ecs "github.com/alibabacloud-go/ecs-20140526/v7/client"
+	"github.com/alibabacloud-go/tea/tea"
+
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
-
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
 )
 
 func tableAlicloudEcsInstance(ctx context.Context) *plugin.Table {
@@ -461,7 +460,7 @@ func tableAlicloudEcsInstance(ctx context.Context) *plugin.Table {
 				Name:        "tags_src",
 				Description: "A list of tags attached with the resource.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(modifyEcsSourceTags),
+				Transform:   transform.FromField("Tags.Tag").Transform(modifyGenericSourceTags),
 			},
 
 			// Steampipe standard columns
@@ -469,7 +468,7 @@ func tableAlicloudEcsInstance(ctx context.Context) *plugin.Table {
 				Name:        "tags",
 				Description: ColumnDescriptionTags,
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(ecsTagsToMap),
+				Transform:   transform.FromField("Tags.Tag").Transform(genericTagsToMap),
 			},
 			{
 				Name:        "akas",
@@ -511,70 +510,65 @@ func tableAlicloudEcsInstance(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listEcsInstance(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listEcsInstance(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := ECSService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_ecs_instance.listEcsInstance", "connection_error", err)
 		return nil, err
 	}
-	request := ecs.CreateDescribeInstancesRequest()
-	request.Scheme = "https"
-	request.MaxResults = requests.NewInteger(100)
-	request.RegionId = d.EqualsQualString(matrixKeyRegion)
+	request := &ecs.DescribeInstancesRequest{
+		MaxResults: tea.Int32(100),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 	quals := d.Quals
 
 	if value, ok := GetBoolQualValue(quals, "device_available"); ok {
-		request.DeviceAvailable = requests.NewBoolean(*value)
+		request.DeviceAvailable = value
 	}
 	if value, ok := GetBoolQualValue(quals, "io_optimized"); ok {
-		request.IoOptimized = requests.NewBoolean(*value)
+		request.IoOptimized = value
 	}
 	if value, ok := GetStringQualValue(quals, "image_id"); ok {
-		request.ImageId = *value
+		request.ImageId = value
 	}
 	if value, ok := GetStringQualValue(quals, "resource_group_id"); ok {
-		request.ResourceGroupId = *value
+		request.ResourceGroupId = value
 	}
 	if value, ok := GetStringQualValue(quals, "vpc_id"); ok {
-		request.VpcId = *value
+		request.VpcId = value
 	}
 	if value, ok := GetStringQualValue(quals, "zone"); ok {
-		request.ZoneId = *value
+		request.ZoneId = value
 	}
 	if value, ok := GetStringQualValue(quals, "billing_method"); ok {
-		request.InstanceChargeType = *value
+		request.InstanceChargeType = value
 	}
 	if value, ok := GetStringQualValue(quals, "family"); ok {
-		request.InstanceTypeFamily = *value
+		request.InstanceTypeFamily = value
 	}
 	if value, ok := GetStringQualValue(quals, "instance_network_type"); ok {
-		request.InstanceNetworkType = *value
+		request.InstanceNetworkType = value
 	}
 	if value, ok := GetStringQualValue(quals, "instance_type"); ok {
-		request.InstanceType = *value
+		request.InstanceType = value
 	}
 	if value, ok := GetStringQualValue(quals, "internet_charge_type"); ok {
-		request.InternetChargeType = *value
+		request.InternetChargeType = value
 	}
 	if value, ok := GetStringQualValue(quals, "name"); ok {
-		request.InstanceName = *value
+		request.InstanceName = value
 	}
 	if value, ok := GetStringQualValue(quals, "status"); ok {
-		request.Status = *value
+		request.Status = value
 	}
 
 	// If the request no of items is less than the paging max limit
 	// update limit to the requested no of results.
 	limit := d.QueryContext.Limit
 	if d.QueryContext.Limit != nil {
-		maxResults, err := request.MaxResults.GetValue64()
-		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_instance.listEcsInstance", "max_results_error", err)
-			return nil, err
-		}
-		if *limit < maxResults {
-			request.MaxResults = requests.NewInteger(int(*limit))
+		if *limit < int64(tea.Int32Value(request.MaxResults)) {
+			request.MaxResults = tea.Int32(int32(*limit))
 		}
 	}
 
@@ -584,19 +578,19 @@ func listEcsInstance(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrate
 		// https://partners-intl.aliyun.com/help/doc-detail/25506.htm?spm=a2c63.p38356.a3.13.24665a4cJb014m#t9865.html
 		response, err := client.DescribeInstances(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_instance.listEcsInstance", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_ecs_instance.listEcsInstance", err, "request", request)
 			return nil, err
 		}
-		for _, instance := range response.Instances.Instance {
-			d.StreamListItem(ctx, instance)
+		for _, instance := range response.Body.Instances.Instance {
+			d.StreamListItem(ctx, *instance)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
 			}
 		}
-		if response.NextToken != "" {
-			request.NextToken = response.NextToken
+		if tea.StringValue(response.Body.NextToken) != "" {
+			request.NextToken = response.Body.NextToken
 		} else {
 			pageLeft = false
 		}
@@ -618,8 +612,8 @@ func getEcsInstance(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateD
 
 	var id string
 	if h.Item != nil {
-		instance := h.Item.(ecs.Instance)
-		id = instance.InstanceId
+		instance := h.Item.(ecs.DescribeInstancesResponseBodyInstancesInstance)
+		id = *instance.InstanceId
 	} else {
 		id = d.EqualsQuals["instance_id"].GetStringValue()
 	}
@@ -631,25 +625,25 @@ func getEcsInstance(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateD
 		return nil, err
 	}
 
-	request := ecs.CreateDescribeInstancesRequest()
-	request.Scheme = "https"
-	request.InstanceIds = string(input)
+	request := &ecs.DescribeInstancesRequest{
+		InstanceIds: tea.String(string(input)),
+	}
 
 	response, err := client.DescribeInstances(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ecs_instance.getEcsInstance", "query_error", serverErr, "request", request)
+	if serverErr, ok := err.(*tea.SDKError); ok {
+		logQueryError(ctx, d, h, "alicloud_ecs_instance.getEcsInstance", serverErr, "request", request)
 		return nil, serverErr
 	}
 
-	if len(response.Instances.Instance) > 0 {
-		return response.Instances.Instance[0], nil
+	if len(response.Body.Instances.Instance) > 0 {
+		return *response.Body.Instances.Instance[0], nil
 	}
 
 	return nil, nil
 }
 
 func getEcsInstanceRamRole(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	instance := h.Item.(ecs.Instance)
+	instance := h.Item.(ecs.DescribeInstancesResponseBodyInstancesInstance)
 
 	// Create service connection
 	client, err := ECSService(ctx, d)
@@ -660,23 +654,24 @@ func getEcsInstanceRamRole(ctx context.Context, d *plugin.QueryData, h *plugin.H
 
 	// In SDK, the Datatype of InstanceIds is string, though the value should be passed as
 	// ["i-bp67acfmxazb4p****", "i-bp67acfmxazb4p****", ... "i-bp67acfmxazb4p****"]
-	input, err := json.Marshal([]string{instance.InstanceId})
+	input, err := json.Marshal([]string{tea.StringValue(instance.InstanceId)})
 	if err != nil {
 		return nil, err
 	}
 
-	request := ecs.CreateDescribeInstanceRamRoleRequest()
-	request.Scheme = "https"
-	request.InstanceIds = string(input)
+	request := &ecs.DescribeInstanceRamRoleRequest{
+		InstanceIds: tea.String(string(input)),
+		RegionId:    tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	response, err := client.DescribeInstanceRamRole(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
+	if serverErr, ok := err.(*tea.SDKError); ok {
 		plugin.Logger(ctx).Error("alicloud_ecs_instance.getEcsInstanceRamRole", "api_error", serverErr, "request", request)
 		return nil, serverErr
 	}
 
-	if len(response.InstanceRamRoleSets.InstanceRamRoleSet) > 0 {
-		return response.InstanceRamRoleSets.InstanceRamRoleSet, nil
+	if len(response.Body.InstanceRamRoleSets.InstanceRamRoleSet) > 0 {
+		return response.Body.InstanceRamRoleSets.InstanceRamRoleSet, nil
 	}
 
 	return nil, nil
@@ -684,7 +679,7 @@ func getEcsInstanceRamRole(ctx context.Context, d *plugin.QueryData, h *plugin.H
 
 func getEcsInstanceARN(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsInstanceARN")
-	instance := h.Item.(ecs.Instance)
+	instance := h.Item.(ecs.DescribeInstancesResponseBodyInstancesInstance)
 
 	// Get project details
 	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()
@@ -695,7 +690,7 @@ func getEcsInstanceARN(ctx context.Context, d *plugin.QueryData, h *plugin.Hydra
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	arn := "arn:acs:ecs:" + instance.RegionId + ":" + accountID + ":instance/" + instance.InstanceId
+	arn := "arn:acs:ecs:" + tea.StringValue(instance.RegionId) + ":" + accountID + ":instance/" + tea.StringValue(instance.InstanceId)
 
 	return arn, nil
 }

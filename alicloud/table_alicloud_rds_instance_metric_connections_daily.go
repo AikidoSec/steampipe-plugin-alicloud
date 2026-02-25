@@ -3,7 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/rds"
+	rds "github.com/alibabacloud-go/rds-20140815/v16/client"
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
@@ -33,6 +34,6 @@ func tableAlicloudRdsInstanceMetricConnectionsDaily(_ context.Context) *plugin.T
 }
 
 func listRdsInstanceMetricConnectionsDaily(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	data := h.Item.(rds.DBInstance)
-	return listCMMetricStatistics(ctx, d, "DAILY", "acs_rds_dashboard", "ConnectionUsage", "instanceId", data.DBInstanceId)
+	data := h.Item.(rds.DescribeDBInstancesResponseBodyItemsDBInstance)
+	return listCMMetricStatistics(ctx, d, "DAILY", "acs_rds_dashboard", "ConnectionUsage", "instanceId", tea.StringValue(data.DBInstanceId))
 }

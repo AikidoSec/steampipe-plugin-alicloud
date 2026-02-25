@@ -3,9 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ess"
+	ess "github.com/alibabacloud-go/ess-20220222/v2/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -124,6 +123,7 @@ func tableAlicloudEcsAutoscalingGroup(ctx context.Context) *plugin.Table {
 				Name:        "life_cycle_state",
 				Description: "The lifecycle status of the scaling group.",
 				Type:        proto.ColumnType_STRING,
+				Transform:   transform.FromField("LifecycleState"),
 			},
 			{
 				Name:        "max_size",
@@ -210,37 +210,37 @@ func tableAlicloudEcsAutoscalingGroup(ctx context.Context) *plugin.Table {
 				Name:        "db_instance_ids",
 				Description: "The IDs of the ApsaraDB RDS instances that are associated with the scaling group.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("DBInstanceIds.DBInstanceId"),
+				Transform:   transform.FromField("DBInstanceIds"),
 			},
 			{
 				Name:        "load_balancer_ids",
 				Description: "The IDs of the SLB instances that are associated with the scaling group.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("LoadBalancerIds.LoadBalancerId"),
+				Transform:   transform.FromField("LoadBalancerIds"),
 			},
 			{
 				Name:        "removal_policies",
 				Description: "Details about policies for removing ECS instances from the scaling group.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("RemovalPolicies.RemovalPolicy"),
+				Transform:   transform.FromField("RemovalPolicies"),
 			},
 			{
 				Name:        "suspended_processes",
 				Description: "The scaling activity that is suspended. If no scaling activity is suspended, the returned value is null.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("SuspendedProcesses.SuspendedProcess"),
+				Transform:   transform.FromField("SuspendedProcesses"),
 			},
 			{
 				Name:        "vserver_groups",
 				Description: "Details about backend server groups.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("VServerGroups.VServerGroup"),
+				Transform:   transform.FromField("VServerGroups"),
 			},
 			{
 				Name:        "vswitch_ids",
 				Description: "A collection of IDs of the VSwitches that are associated with the scaling group.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("VSwitchIds.VSwitchId"),
+				Transform:   transform.FromField("VSwitchIds"),
 			},
 			{
 				Name:        "scaling_configurations",
@@ -261,7 +261,7 @@ func tableAlicloudEcsAutoscalingGroup(ctx context.Context) *plugin.Table {
 				Description: "A list of tags attached with the resource.",
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     getEcsAutoscalingGroupTags,
-				Transform:   transform.FromField("TagResources.TagResource").Transform(modifyEssSourceTags),
+				Transform:   transform.FromField("TagResources").Transform(modifyGenericSourceTags),
 			},
 
 			// steampipe standard columns
@@ -270,7 +270,7 @@ func tableAlicloudEcsAutoscalingGroup(ctx context.Context) *plugin.Table {
 				Description: ColumnDescriptionTags,
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     getEcsAutoscalingGroupTags,
-				Transform:   transform.FromField("TagResources.TagResource").Transform(essTurbotTags),
+				Transform:   transform.FromField("TagResources").Transform(genericTagsToMap),
 			},
 			{
 				Name:        "akas",
@@ -306,27 +306,28 @@ func tableAlicloudEcsAutoscalingGroup(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listEcsAutoscalingGroup(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listEcsAutoscalingGroup(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := AutoscalingService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_ecs_autoscaling_group.listEcsAutoscalingGroup", "connection_error", err)
 		return nil, err
 	}
-	request := ess.CreateDescribeScalingGroupsRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &ess.DescribeScalingGroupsRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	count := 0
 	for {
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeScalingGroups(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_autoscaling_group.listEcsAutoscalingGroup", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_ecs_autoscaling_group.listEcsAutoscalingGroup", err, "request", request)
 			return nil, err
 		}
-		for _, group := range response.ScalingGroups.ScalingGroup {
+		for _, group := range response.Body.ScalingGroups {
 			plugin.Logger(ctx).Warn("listEcsAutoscalingGroup", "item", group)
 			d.StreamListItem(ctx, group)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
@@ -336,10 +337,10 @@ func listEcsAutoscalingGroup(ctx context.Context, d *plugin.QueryData, _ *plugin
 			}
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(*response.Body.TotalCount) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(*response.Body.PageNumber + 1)
 	}
 	return nil, nil
 }
@@ -359,23 +360,25 @@ func getEcsAutoscalingGroup(ctx context.Context, d *plugin.QueryData, h *plugin.
 	name := d.EqualsQuals["name"].GetStringValue()
 	id := d.EqualsQuals["scaling_group_id"].GetStringValue()
 
-	request := ess.CreateDescribeScalingGroupsRequest()
-	request.Scheme = "https"
+	request := &ess.DescribeScalingGroupsRequest{}
 
 	if name != "" {
-		request.ScalingGroupName = name
+		request.ScalingGroupName = &name
 	} else {
-		request.ScalingGroupId = &[]string{id}
+		request.ScalingGroupIds = []*string{&id}
 	}
 
 	response, err := client.DescribeScalingGroups(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ecs_autoscaling_group.getEcsAutoscalingGroup", "query_error", serverErr, "request", request)
-		return nil, serverErr
+	if err != nil {
+		if serverErr, ok := err.(*tea.SDKError); ok {
+			logQueryError(ctx, d, h, "alicloud_ecs_autoscaling_group.getEcsAutoscalingGroup", serverErr, "request", request)
+			return nil, serverErr
+		}
+		return nil, err
 	}
 
-	if len(response.ScalingGroups.ScalingGroup) > 0 {
-		return response.ScalingGroups.ScalingGroup[0], nil
+	if len(response.Body.ScalingGroups) > 0 {
+		return response.Body.ScalingGroups[0], nil
 	}
 
 	return nil, nil
@@ -383,7 +386,7 @@ func getEcsAutoscalingGroup(ctx context.Context, d *plugin.QueryData, h *plugin.
 
 func getEcsAutoscalingGroupConfigurations(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsAutoscalingGroupConfigurations")
-	data := h.Item.(ess.ScalingGroup)
+	data := h.Item.(*ess.DescribeScalingGroupsResponseBodyScalingGroups)
 
 	// Create service connection
 	client, err := AutoscalingService(ctx, d)
@@ -392,18 +395,21 @@ func getEcsAutoscalingGroupConfigurations(ctx context.Context, d *plugin.QueryDa
 		return nil, err
 	}
 
-	request := ess.CreateDescribeScalingConfigurationsRequest()
-	request.Scheme = "https"
-	request.ScalingGroupId = data.ScalingGroupId
-
-	response, err := client.DescribeScalingConfigurations(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ecs_autoscaling_group.getEcsAutoscalingGroupConfigurations", "query_error", serverErr, "request", request)
-		return nil, serverErr
+	request := &ess.DescribeScalingConfigurationsRequest{
+		ScalingGroupId: data.ScalingGroupId,
 	}
 
-	if response.ScalingConfigurations.ScalingConfiguration != nil {
-		return response.ScalingConfigurations.ScalingConfiguration, nil
+	response, err := client.DescribeScalingConfigurations(request)
+	if err != nil {
+		if serverErr, ok := err.(*tea.SDKError); ok {
+			logQueryError(ctx, d, h, "alicloud_ecs_autoscaling_group.getEcsAutoscalingGroupConfigurations", serverErr, "request", request)
+			return nil, serverErr
+		}
+		return nil, err
+	}
+
+	if response.Body.ScalingConfigurations != nil {
+		return response.Body.ScalingConfigurations, nil
 	}
 
 	return nil, nil
@@ -411,7 +417,7 @@ func getEcsAutoscalingGroupConfigurations(ctx context.Context, d *plugin.QueryDa
 
 func getEcsAutoscalingGroupScalingInstances(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsAutoscalingGroupScalingInstances")
-	data := h.Item.(ess.ScalingGroup)
+	data := h.Item.(*ess.DescribeScalingGroupsResponseBodyScalingGroups)
 
 	// Create service connection
 	client, err := AutoscalingService(ctx, d)
@@ -420,18 +426,21 @@ func getEcsAutoscalingGroupScalingInstances(ctx context.Context, d *plugin.Query
 		return nil, err
 	}
 
-	request := ess.CreateDescribeScalingInstancesRequest()
-	request.Scheme = "https"
-	request.ScalingGroupId = data.ScalingGroupId
-
-	response, err := client.DescribeScalingInstances(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ecs_autoscaling_group.getEcsAutoscalingGroupScalingInstances", "query_error", serverErr, "request", request)
-		return nil, serverErr
+	request := &ess.DescribeScalingInstancesRequest{
+		ScalingGroupId: data.ScalingGroupId,
 	}
 
-	if response.ScalingInstances.ScalingInstance != nil {
-		return response.ScalingInstances.ScalingInstance, nil
+	response, err := client.DescribeScalingInstances(request)
+	if err != nil {
+		if serverErr, ok := err.(*tea.SDKError); ok {
+			logQueryError(ctx, d, h, "alicloud_ecs_autoscaling_group.getEcsAutoscalingGroupScalingInstances", serverErr, "request", request)
+			return nil, serverErr
+		}
+		return nil, err
+	}
+
+	if response.Body.ScalingInstances != nil {
+		return response.Body.ScalingInstances, nil
 	}
 
 	return nil, nil
@@ -439,7 +448,7 @@ func getEcsAutoscalingGroupScalingInstances(ctx context.Context, d *plugin.Query
 
 func getEcsAutoscalingGroupTags(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsAutoscalingGroupTags")
-	data := h.Item.(ess.ScalingGroup)
+	data := h.Item.(*ess.DescribeScalingGroupsResponseBodyScalingGroups)
 
 	// Create service connection
 	client, err := AutoscalingService(ctx, d)
@@ -448,23 +457,26 @@ func getEcsAutoscalingGroupTags(ctx context.Context, d *plugin.QueryData, h *plu
 		return nil, err
 	}
 
-	request := ess.CreateListTagResourcesRequest()
-	request.Scheme = "https"
-	request.ResourceType = "scalingGroup"
-	request.ResourceId = &[]string{data.ScalingGroupId}
-
-	response, err := client.ListTagResources(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("alicloud_ecs_autoscaling_group.getEcsAutoscalingGroupTags", "query_error", serverErr, "request", request)
-		return nil, serverErr
+	request := &ess.ListTagResourcesRequest{
+		ResourceType: tea.String("scalinggroup"),
+		ResourceIds:  []*string{data.ScalingGroupId},
 	}
 
-	return response, nil
+	response, err := client.ListTagResources(request)
+	if err != nil {
+		if serverErr, ok := err.(*tea.SDKError); ok {
+			logQueryError(ctx, d, h, "alicloud_ecs_autoscaling_group.getEcsAutoscalingGroupTags", serverErr, "request", request)
+			return nil, serverErr
+		}
+		return nil, err
+	}
+
+	return response.Body, nil
 }
 
 func getEcsAutoscalingGroupAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsAutoscalingGroupAka")
-	data := h.Item.(ess.ScalingGroup)
+	data := h.Item.(*ess.DescribeScalingGroupsResponseBodyScalingGroups)
 
 	// Get project details
 	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()
@@ -475,7 +487,7 @@ func getEcsAutoscalingGroupAka(ctx context.Context, d *plugin.QueryData, h *plug
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	akas := []string{"arn:acs:ess:" + data.RegionId + ":" + accountID + ":scalinggroup/" + data.ScalingGroupId}
+	akas := []string{"arn:acs:ess:" + tea.StringValue(data.RegionId) + ":" + accountID + ":scalinggroup/" + tea.StringValue(data.ScalingGroupId)}
 
 	return akas, nil
 }

@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/cs"
+	cs "github.com/alibabacloud-go/cs-20151215/v7/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -165,7 +165,7 @@ func tableAlicloudCsKubernetesClusterNode(ctx context.Context) *plugin.Table {
 
 type NodeInfo struct {
 	ClusterId string
-	cs.Node
+	cs.DescribeClusterNodesResponseBodyNodes
 }
 
 //// LIST FUNCTION
@@ -179,19 +179,17 @@ func listCsKubernetesClusterNodes(ctx context.Context, d *plugin.QueryData, h *p
 	}
 
 	clusterId := h.Item.(map[string]interface{})["cluster_id"].(string)
-	request := cs.CreateDescribeClusterNodesRequest()
-	request.Scheme = "https"
-	request.ClusterId = clusterId
+	request := &cs.DescribeClusterNodesRequest{}
 
-	response, err := client.DescribeClusterNodes(request)
+	response, err := client.DescribeClusterNodes(&clusterId, request)
 	if err != nil {
-		plugin.Logger(ctx).Error("listCsKubernetesClusterNodes", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "listCsKubernetesClusterNodes", err, "request", request)
 		return nil, err
 	}
-	for _, node := range response.Nodes {
+	for _, node := range response.Body.Nodes {
 		d.StreamListItem(ctx, &NodeInfo{
-			ClusterId: clusterId,
-			Node:      node,
+			ClusterId:                          clusterId,
+			DescribeClusterNodesResponseBodyNodes: *node,
 		})
 		// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 		// if there is a limit, it will return the number of rows required to reach this limit
@@ -220,21 +218,22 @@ func getCsKubernetesClusterNode(ctx context.Context, d *plugin.QueryData, h *plu
 		return nil, nil
 	}
 
-	request := cs.CreateDescribeClusterNodesRequest()
-	request.Scheme = "https"
-	request.ClusterId = clusterId
+	request := &cs.DescribeClusterNodesRequest{}
 
-	response, err := client.DescribeClusterNodes(request)
-	if serverErr, ok := err.(*errors.ServerError); ok {
-		plugin.Logger(ctx).Error("getCsKubernetesClusterNode", "query_error", serverErr, "request", request)
-		return nil, serverErr
+	response, err := client.DescribeClusterNodes(&clusterId, request)
+	if err != nil {
+		if serverErr, ok := err.(*tea.SDKError); ok {
+			logQueryError(ctx, d, h, "getCsKubernetesClusterNode", serverErr)
+			return nil, serverErr
+		}
+		return nil, err
 	}
 
-	for _, item := range response.Nodes {
-		if item.InstanceId == instanceId {
+	for _, item := range response.Body.Nodes {
+		if item.InstanceId != nil && *item.InstanceId == instanceId {
 			return &NodeInfo{
-				ClusterId: clusterId,
-				Node:      item,
+				ClusterId:                          clusterId,
+				DescribeClusterNodesResponseBodyNodes: *item,
 			}, nil
 		}
 	}
@@ -245,7 +244,7 @@ func getCsKubernetesClusterNode(ctx context.Context, d *plugin.QueryData, h *plu
 func getCsKubernetesClusterNodeAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getCsKubernetesClusterNodeAka")
 
-	nodeName := h.Item.(*NodeInfo).NodeName
+	nodeName := tea.StringValue(h.Item.(*NodeInfo).NodeName)
 
 	// Get project details
 	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()
@@ -264,7 +263,7 @@ func getCsKubernetesClusterNodeAka(ctx context.Context, d *plugin.QueryData, h *
 //// TRANSFORM FUNCTIONS
 
 func clusterNodeRegion(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	nodeName := d.HydrateItem.(*NodeInfo).NodeName
+	nodeName := tea.StringValue(d.HydrateItem.(*NodeInfo).NodeName)
 
 	return strings.Split(nodeName, ".")[0], nil
 }

@@ -3,7 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
+	ecs "github.com/alibabacloud-go/ecs-20140526/v7/client"
+	"github.com/alibabacloud-go/tea/tea"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -11,7 +12,7 @@ import (
 )
 
 type zoneInfo = struct {
-	ecs.Zone
+	ecs.DescribeZonesResponseBodyZonesZone
 	Region string
 }
 
@@ -114,28 +115,28 @@ func tableAlicloudEcsZone(ctx context.Context) *plugin.Table {
 //// LIST FUNCTION
 
 func listEcsZones(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	region := h.Item.(ecs.Region).RegionId
+	region := h.Item.(ecs.DescribeRegionsResponseBodyRegionsRegion).RegionId
 
 	// Create service connection
-	client, err := ECSRegionService(ctx, d, region)
+	client, err := ECSRegionService(ctx, d, *region)
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_ecs.listEcsZones", "connection_error", err)
 		return nil, err
 	}
 
-	request := ecs.CreateDescribeZonesRequest()
-	request.Scheme = "https"
-	request.RegionId = region
-	request.AcceptLanguage = "en-US"
+	request := &ecs.DescribeZonesRequest{
+		RegionId:       region,
+		AcceptLanguage: tea.String("en-US"),
+	}
 
 	response, err := client.DescribeZones(request)
 	plugin.Logger(ctx).Trace("alicloud_ecs.listEcsZones", "network_test:", response)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_ecs.listEcsZones", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_ecs.listEcsZones", err, "request", request)
 		return nil, err
 	}
-	for _, i := range response.Zones.Zone {
-		d.StreamListItem(ctx, zoneInfo{i, region})
+	for _, i := range response.Body.Zones.Zone {
+		d.StreamListItem(ctx, zoneInfo{*i, *region})
 		// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 		// if there is a limit, it will return the number of rows required to reach this limit
 		if d.RowsRemaining(ctx) == 0 {
@@ -158,5 +159,5 @@ func getZoneAkas(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	return []string{"acs:ecs::" + accountID + ":zone/" + data.ZoneId}, nil
+	return []string{"acs:ecs::" + accountID + ":zone/" + tea.StringValue(data.ZoneId)}, nil
 }

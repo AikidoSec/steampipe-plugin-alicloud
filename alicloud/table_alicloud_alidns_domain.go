@@ -3,8 +3,9 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/alidns"
+	alidns "github.com/alibabacloud-go/alidns-20150109/v5/client"
+	"github.com/alibabacloud-go/tea/tea"
+
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
@@ -174,7 +175,7 @@ func tableAlicloudAlidnsDomain(ctx context.Context) *plugin.Table {
 				Name:        "tags",
 				Description: ColumnDescriptionTags,
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(dnsTagsToMap),
+				Transform:   transform.FromField("Tags.Tag").Transform(modifyGenericSourceTags),
 			},
 			{
 				Name:        "akas",
@@ -211,8 +212,7 @@ func tableAlicloudAlidnsDomain(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listAlidnsDomains(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
-
+func listAlidnsDomains(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := AliDNSService(ctx, d)
 	if err != nil {
@@ -220,11 +220,12 @@ func listAlidnsDomains(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydra
 		return nil, err
 	}
 
-	request := alidns.CreateDescribeDomainsRequest()
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &alidns.DescribeDomainsRequest{
+		PageSize:   tea.Int64(50),
+		PageNumber: tea.Int64(1),
+	}
 	if d.EqualsQualString("group_id") != "" {
-		request.GroupId = d.EqualsQualString("group_id")
+		request.SetGroupId(d.EqualsQualString("group_id"))
 	}
 
 	count := 0
@@ -232,11 +233,11 @@ func listAlidnsDomains(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydra
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeDomains(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_alidns_domain.listAlidnsDomains", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_alidns_domain.listAlidnsDomains", err, "request", request)
 			return nil, err
 		}
 
-		for _, domain := range response.Domains.Domain {
+		for _, domain := range response.Body.Domains.Domain {
 			d.StreamListItem(ctx, domain)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
@@ -246,16 +247,11 @@ func listAlidnsDomains(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydra
 			count++
 		}
 
-		if count >= int(response.TotalCount) {
+		if count >= int(*response.Body.TotalCount) {
 			break
 		}
 
-		pgNumber, err := request.PageNumber.GetValue()
-		if err != nil {
-			return nil, err
-		}
-
-		request.PageNumber = requests.NewInteger(pgNumber + 1)
+		request.SetPageNumber(*request.PageNumber + 1)
 	}
 
 	return nil, nil
@@ -267,8 +263,8 @@ func getAlidnsDomain(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrate
 	domainName := d.EqualsQualString("domain_name")
 
 	if domainName == "" {
-		domain := h.Item.(alidns.DomainInDescribeDomains)
-		domainName = domain.DomainName
+		domain := h.Item.(*alidns.DescribeDomainsResponseBodyDomainsDomain)
+		domainName = *domain.DomainName
 	}
 
 	// Create service connection
@@ -278,12 +274,13 @@ func getAlidnsDomain(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrate
 		return nil, err
 	}
 
-	request := alidns.CreateDescribeDomainInfoRequest()
-	request.DomainName = domainName
+	request := &alidns.DescribeDomainInfoRequest{
+		DomainName: &domainName,
+	}
 
 	response, err := client.DescribeDomainInfo(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_alidns_domain.getAlidnsDomain", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_alidns_domain.getAlidnsDomain", err, "request", request)
 		return nil, err
 	}
 
@@ -304,10 +301,10 @@ func domainToAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData
 	domainName := ""
 
 	switch item := h.Item.(type) {
-	case *alidns.DescribeDomainInfoResponse:
-		domainName = item.DomainName
-	case alidns.DomainInDescribeDomains:
-		domainName = item.DomainName
+	case alidns.DescribeDomainInfoResponseBody:
+		domainName = *item.DomainName
+	case *alidns.DescribeDomainsResponseBodyDomainsDomain:
+		domainName = *item.DomainName
 	}
 
 	aka := []string{"acs:alidns:" + region + ":" + accountID + ":domain/" + domainName}

@@ -3,8 +3,8 @@ package alicloud
 import (
 	"context"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/vpc"
+	"github.com/alibabacloud-go/tea/tea"
+	vpc "github.com/alibabacloud-go/vpc-20160428/v7/client"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -133,28 +133,41 @@ func tableAlicloudVpcSslVpnClientCert(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listVpcSslVpnClientCerts(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listVpcSslVpnClientCerts(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := VpcService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_vpc_vpn_ssl_client.listVpcSslVpnClientCerts", "connection_error", err)
 		return nil, err
 	}
-	request := vpc.CreateDescribeSslVpnClientCertsRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &vpc.DescribeSslVpnClientCertsRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	count := 0
 	for {
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeSslVpnClientCerts(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_vpc_vpn_ssl_client.listVpcSslVpnClientCerts", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_vpc_vpn_ssl_client.listVpcSslVpnClientCerts", err, "request", request)
 			return nil, err
 		}
-		for _, i := range response.SslVpnClientCertKeys.SslVpnClientCertKey {
-			d.StreamListItem(ctx, vpnSslClientCertInfo{i.Name, i.SslVpnClientCertId, i.SslVpnServerId, i.Status, i.CreateTime, i.EndTime, "", "", "", "", i.RegionId})
+		for _, i := range response.Body.SslVpnClientCertKeys.SslVpnClientCertKey {
+			d.StreamListItem(ctx, vpnSslClientCertInfo{
+				tea.StringValue(i.Name),
+				tea.StringValue(i.SslVpnClientCertId),
+				tea.StringValue(i.SslVpnServerId),
+				tea.StringValue(i.Status),
+				tea.Int64Value(i.CreateTime),
+				tea.Int64Value(i.EndTime),
+				"",
+				"",
+				"",
+				"",
+				tea.StringValue(i.RegionId),
+			})
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -162,10 +175,10 @@ func listVpcSslVpnClientCerts(ctx context.Context, d *plugin.QueryData, _ *plugi
 			}
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(tea.Int32Value(response.Body.TotalCount)) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(tea.Int32Value(response.Body.PageNumber) + 1)
 	}
 	return nil, nil
 }
@@ -190,17 +203,29 @@ func getVpcSslVpnClientCert(ctx context.Context, d *plugin.QueryData, h *plugin.
 		id = d.EqualsQuals["ssl_vpn_client_cert_id"].GetStringValue()
 	}
 
-	request := vpc.CreateDescribeSslVpnClientCertRequest()
-	request.Scheme = "https"
-	request.SslVpnClientCertId = id
+	request := &vpc.DescribeSslVpnClientCertRequest{
+		SslVpnClientCertId: &id,
+	}
 
 	data, err := client.DescribeSslVpnClientCert(request)
 	if err != nil {
-		plugin.Logger(ctx).Error("alicloud_vpc_vpn_ssl_client.getVpcSslVpnClientCert", "query_error", err, "request", request)
+		logQueryError(ctx, d, h, "alicloud_vpc_vpn_ssl_client.getVpcSslVpnClientCert", err, "request", request)
 		return nil, err
 	}
 
-	return vpnSslClientCertInfo{data.Name, data.SslVpnClientCertId, data.SslVpnServerId, data.Status, data.CreateTime, data.EndTime, data.CaCert, data.ClientCert, data.ClientKey, data.ClientConfig, data.RegionId}, nil
+	return vpnSslClientCertInfo{
+		tea.StringValue(data.Body.Name),
+		tea.StringValue(data.Body.SslVpnClientCertId),
+		tea.StringValue(data.Body.SslVpnServerId),
+		tea.StringValue(data.Body.Status),
+		tea.Int64Value(data.Body.CreateTime),
+		tea.Int64Value(data.Body.EndTime),
+		tea.StringValue(data.Body.CaCert),
+		tea.StringValue(data.Body.ClientCert),
+		tea.StringValue(data.Body.ClientKey),
+		tea.StringValue(data.Body.ClientConfig),
+		tea.StringValue(data.Body.RegionId),
+	}, nil
 }
 
 func getVpcSslVpnClientCertCertAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {

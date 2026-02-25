@@ -2,14 +2,13 @@ package alicloud
 
 import (
 	"context"
-	"strconv"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
+	ecs "github.com/alibabacloud-go/ecs-20140526/v7/client"
+	"github.com/alibabacloud-go/tea/tea"
+
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
-
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
 )
 
 //// TABLE DEFINITION
@@ -87,7 +86,7 @@ func tableAlicloudEcsLaunchTemplate(ctx context.Context) *plugin.Table {
 				Name:        "tags_src",
 				Description: "A list of tags attached with the resource.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(modifyEcsSourceTags),
+				Transform:   transform.FromField("Tags.Tag").Transform(modifyGenericSourceTags),
 			},
 
 			// Steampipe standard columns
@@ -95,7 +94,7 @@ func tableAlicloudEcsLaunchTemplate(ctx context.Context) *plugin.Table {
 				Name:        "tags",
 				Description: ColumnDescriptionTags,
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Tags.Tag").Transform(ecsTagsToMap),
+				Transform:   transform.FromField("Tags.Tag").Transform(genericTagsToMap),
 			},
 			{
 				Name:        "akas",
@@ -132,28 +131,29 @@ func tableAlicloudEcsLaunchTemplate(ctx context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listEcsLaunchTemplates(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listEcsLaunchTemplates(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Create service connection
 	client, err := ECSService(ctx, d)
 	if err != nil {
 		plugin.Logger(ctx).Error("alicloud_ecs_launch_template.listEcsLaunchTemplates", "connection_error", err)
 		return nil, err
 	}
-	request := ecs.CreateDescribeLaunchTemplatesRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &ecs.DescribeLaunchTemplatesRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	count := 0
 	for {
 		d.WaitForListRateLimit(ctx)
 		response, err := client.DescribeLaunchTemplates(request)
 		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_launch_template.listEcsLaunchTemplates", "query_error", err, "request", request)
+			logQueryError(ctx, d, h, "alicloud_ecs_launch_template.listEcsLaunchTemplates", err, "request", request)
 			return nil, err
 		}
-		for _, launchTemplate := range response.LaunchTemplateSets.LaunchTemplateSet {
-			d.StreamListItem(ctx, launchTemplate)
+		for _, launchTemplate := range response.Body.LaunchTemplateSets.LaunchTemplateSet {
+			d.StreamListItem(ctx, *launchTemplate)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -161,10 +161,10 @@ func listEcsLaunchTemplates(ctx context.Context, d *plugin.QueryData, _ *plugin.
 			}
 			count++
 		}
-		if count >= response.TotalCount {
+		if count >= int(*response.Body.TotalCount) {
 			break
 		}
-		request.PageNumber = requests.NewInteger(response.PageNumber + 1)
+		request.PageNumber = tea.Int32(*response.Body.PageNumber + 1)
 	}
 	return nil, nil
 }
@@ -181,25 +181,25 @@ func getEcsLaunchTemplate(ctx context.Context, d *plugin.QueryData, h *plugin.Hy
 		return nil, err
 	}
 
-	var id string
+	var id *string
 	if h.Item != nil {
-		disk := h.Item.(ecs.Disk)
+		disk := h.Item.(ecs.DescribeDisksResponseBodyDisksDisk)
 		id = disk.DiskId
 	} else {
-		id = d.EqualsQuals["launch_template_id"].GetStringValue()
+		id = tea.String(d.EqualsQuals["launch_template_id"].GetStringValue())
 	}
 
-	request := ecs.CreateDescribeLaunchTemplatesRequest()
-	request.Scheme = "https"
-	request.LaunchTemplateId = &[]string{id}
+	request := &ecs.DescribeLaunchTemplatesRequest{
+		LaunchTemplateId: []*string{id},
+	}
 
 	response, err := client.DescribeLaunchTemplates(request)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(response.LaunchTemplateSets.LaunchTemplateSet) > 0 {
-		return response.LaunchTemplateSets.LaunchTemplateSet[0], nil
+	if len(response.Body.LaunchTemplateSets.LaunchTemplateSet) > 0 {
+		return *response.Body.LaunchTemplateSets.LaunchTemplateSet[0], nil
 	}
 
 	return nil, nil
@@ -208,7 +208,7 @@ func getEcsLaunchTemplate(ctx context.Context, d *plugin.QueryData, h *plugin.Hy
 func getEcsLaunchTemplateLatestVersionDetails(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsLaunchTemplateLatestVersionDetails")
 
-	data := h.Item.(ecs.LaunchTemplateSet)
+	data := h.Item.(ecs.DescribeLaunchTemplatesResponseBodyLaunchTemplateSetsLaunchTemplateSet)
 
 	// Create service connection
 	client, err := ECSService(ctx, d)
@@ -217,18 +217,18 @@ func getEcsLaunchTemplateLatestVersionDetails(ctx context.Context, d *plugin.Que
 		return nil, err
 	}
 
-	request := ecs.CreateDescribeLaunchTemplateVersionsRequest()
-	request.Scheme = "https"
-	request.LaunchTemplateId = data.LaunchTemplateId
-	request.LaunchTemplateVersion = &[]string{strconv.Itoa(int(data.LatestVersionNumber))}
+	request := &ecs.DescribeLaunchTemplateVersionsRequest{
+		LaunchTemplateId:      data.LaunchTemplateId,
+		LaunchTemplateVersion: []*int64{data.LatestVersionNumber},
+	}
 
 	response, err := client.DescribeLaunchTemplateVersions(request)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(response.LaunchTemplateVersionSets.LaunchTemplateVersionSet) > 0 {
-		return response.LaunchTemplateVersionSets.LaunchTemplateVersionSet[0], nil
+	if len(response.Body.LaunchTemplateVersionSets.LaunchTemplateVersionSet) > 0 {
+		return *response.Body.LaunchTemplateVersionSets.LaunchTemplateVersionSet[0], nil
 	}
 
 	return nil, nil
@@ -236,7 +236,7 @@ func getEcsLaunchTemplateLatestVersionDetails(ctx context.Context, d *plugin.Que
 
 func getEcsLaunchTemplateAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsLaunchTemplateAka")
-	data := h.Item.(ecs.LaunchTemplateSet)
+	data := h.Item.(ecs.DescribeLaunchTemplatesResponseBodyLaunchTemplateSetsLaunchTemplateSet)
 	region := d.EqualsQualString(matrixKeyRegion)
 
 	// Get project details
@@ -248,7 +248,7 @@ func getEcsLaunchTemplateAka(ctx context.Context, d *plugin.QueryData, h *plugin
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	akas := []string{"acs:ecs:" + region + ":" + accountID + ":launch-template/" + data.LaunchTemplateId}
+	akas := []string{"acs:ecs:" + region + ":" + accountID + ":launch-template/" + tea.StringValue(data.LaunchTemplateId)}
 
 	return akas, nil
 }
@@ -262,13 +262,13 @@ func getLaunchTemplateRegion(ctx context.Context, d *plugin.QueryData, h *plugin
 //// TRANSFORM FUNCTIONS
 
 func ecsLaunchTemplateTitle(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	data := d.HydrateItem.(ecs.LaunchTemplateSet)
+	data := d.HydrateItem.(ecs.DescribeLaunchTemplatesResponseBodyLaunchTemplateSetsLaunchTemplateSet)
 
 	// Build resource title
-	title := data.LaunchTemplateId
+	title := *data.LaunchTemplateId
 
-	if len(data.LaunchTemplateName) > 0 {
-		title = data.LaunchTemplateName
+	if len(*data.LaunchTemplateName) > 0 {
+		title = *data.LaunchTemplateName
 	}
 
 	return title, nil

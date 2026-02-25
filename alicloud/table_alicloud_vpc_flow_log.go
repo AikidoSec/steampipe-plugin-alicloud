@@ -4,12 +4,12 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/vpc"
+	"github.com/alibabacloud-go/tea/tea"
+	vpc "github.com/alibabacloud-go/vpc-20160428/v7/client"
 )
 
 //// TABLE DEFINITION
@@ -131,28 +131,29 @@ func listVpcFlowLogs(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrate
 		plugin.Logger(ctx).Error("alicloud_vpc_flow_log.listVpcFlowLogs", "connection_error", err)
 		return nil, err
 	}
-	request := vpc.CreateDescribeFlowLogsRequest()
-	request.Scheme = "https"
-	request.PageSize = requests.NewInteger(50)
-	request.PageNumber = requests.NewInteger(1)
+	request := &vpc.DescribeFlowLogsRequest{
+		PageSize:   tea.Int32(50),
+		PageNumber: tea.Int32(1),
+		RegionId:   tea.String(d.EqualsQualString(matrixKeyRegion)),
+	}
 
 	if d.EqualsQualString("name") != "" {
-		request.FlowLogName = d.EqualsQualString("name")
+		request.FlowLogName = tea.String(d.EqualsQualString("name"))
 	}
 	if d.EqualsQualString("log_store_name") != "" {
-		request.LogStoreName = d.EqualsQualString("log_store_name")
+		request.LogStoreName = tea.String(d.EqualsQualString("log_store_name"))
 	}
 	if d.EqualsQualString("resource_id") != "" {
-		request.ResourceId = d.EqualsQualString("resource_id")
+		request.ResourceId = tea.String(d.EqualsQualString("resource_id"))
 	}
 	if d.EqualsQualString("status") != "" {
-		request.Status = d.EqualsQualString("status")
+		request.Status = tea.String(d.EqualsQualString("status"))
 	}
 	if d.EqualsQualString("project_name") != "" {
-		request.ProjectName = d.EqualsQualString("project_name")
+		request.ProjectName = tea.String(d.EqualsQualString("project_name"))
 	}
 	if d.EqualsQualString("traffic_type") != "" {
-		request.TrafficType = d.EqualsQualString("traffic_type")
+		request.TrafficType = tea.String(d.EqualsQualString("traffic_type"))
 	}
 
 	count := 0
@@ -163,8 +164,8 @@ func listVpcFlowLogs(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrate
 			plugin.Logger(ctx).Error("alicloud_vpc_flow_log.listVpcFlowLogs", "api_error", err, "request", request)
 			return nil, err
 		}
-		for _, flowLog := range response.FlowLogs.FlowLog {
-			d.StreamListItem(ctx, flowLog)
+		for _, flowLog := range response.Body.FlowLogs.FlowLog {
+			d.StreamListItem(ctx, *flowLog)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -172,12 +173,12 @@ func listVpcFlowLogs(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrate
 			}
 			count++
 		}
-		totalCount, _ := strconv.Atoi(response.TotalCount)
+		totalCount, _ := strconv.Atoi(tea.StringValue(response.Body.TotalCount))
 		if count >= totalCount {
 			break
 		}
-		pageNumber, _ := strconv.Atoi(response.PageNumber)
-		request.PageNumber = requests.NewInteger(pageNumber + 1)
+		pageNumber, _ := strconv.Atoi(tea.StringValue(response.Body.PageNumber))
+		request.PageNumber = tea.Int32(int32(pageNumber) + 1)
 	}
 	return nil, nil
 }
@@ -198,9 +199,9 @@ func getVpcFlowLog(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 		return nil, nil
 	}
 
-	request := vpc.CreateDescribeFlowLogsRequest()
-	request.Scheme = "https"
-	request.FlowLogId = id
+	request := &vpc.DescribeFlowLogsRequest{
+		FlowLogId: &id,
+	}
 
 	response, err := client.DescribeFlowLogs(request)
 	if err != nil {
@@ -208,15 +209,15 @@ func getVpcFlowLog(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 		return nil, err
 	}
 
-	if len(response.FlowLogs.FlowLog) > 0 {
-		return response.FlowLogs.FlowLog[0], nil
+	if len(response.Body.FlowLogs.FlowLog) > 0 {
+		return *response.Body.FlowLogs.FlowLog[0], nil
 	}
 
 	return nil, nil
 }
 
 func getVpcFlowLogAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	data := h.Item.(vpc.FlowLog)
+	data := h.Item.(vpc.DescribeFlowLogsResponseBodyFlowLogsFlowLog)
 	region := d.EqualsQualString(matrixKeyRegion)
 
 	// Get project details
@@ -228,7 +229,7 @@ func getVpcFlowLogAka(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrat
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	akas := []string{"acs:vpc:" + region + ":" + accountID + ":flowlog/" + data.FlowLogId}
+	akas := []string{"acs:vpc:" + region + ":" + accountID + ":flowlog/" + tea.StringValue(data.FlowLogId)}
 
 	return akas, nil
 }
