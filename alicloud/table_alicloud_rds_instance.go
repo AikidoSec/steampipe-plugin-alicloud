@@ -622,7 +622,7 @@ func listRdsInstances(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrat
 		}
 		for _, i := range response.Body.Items.DBInstance {
 			plugin.Logger(ctx).Warn("alicloud_rds.DescribeDBInstances", "item", i)
-			d.StreamListItem(ctx, i)
+			d.StreamListItem(ctx, *i)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -712,7 +712,7 @@ func getRdsInstanceIPArrayList(ctx context.Context, d *plugin.QueryData, h *plug
 	}
 
 	if len(response.Body.Items.DBInstanceIPArray) > 0 {
-		return response, nil
+		return *response.Body, nil
 	}
 
 	return nil, nil
@@ -819,7 +819,7 @@ func getRdsInstanceParameters(ctx context.Context, d *plugin.QueryData, h *plugi
 		logQueryError(ctx, d, h, "getRdsInstanceParameters", err, "request", request)
 		return nil, err
 	}
-	return response, nil
+	return *response.Body, nil
 }
 
 func getRdsTags(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -847,7 +847,7 @@ func getRdsTags(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData)
 	}
 
 	if response != nil {
-		return response, nil
+		return *response.Body, nil
 	}
 
 	return nil, nil
@@ -893,7 +893,7 @@ func getSqlCollectorPolicy(ctx context.Context, d *plugin.QueryData, h *plugin.H
 		logQueryError(ctx, d, h, "getSqlCollectorPolicy", err, "request", request)
 		return nil, err
 	}
-	return response, nil
+	return *response.Body, nil
 }
 
 func getRdsInstanceEncryptionKey(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -948,7 +948,7 @@ func getSqlCollectorRetention(ctx context.Context, d *plugin.QueryData, h *plugi
 		logQueryError(ctx, d, h, "getSqlCollectorRetention", err, "request", request)
 		return nil, err
 	}
-	return response, nil
+	return *response.Body, nil
 }
 
 func getRdsInstanceSecurityGroupConfiguration(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -994,14 +994,10 @@ func getSecurityIps(_ context.Context, d *transform.TransformData) (interface{},
 }
 
 func rdsInstanceTagsSrc(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	tags := d.Value.(*rds.DescribeTagsResponse)
-	if tags == nil {
-		return nil, nil
-	}
-
+	tags := d.Value.(rds.DescribeTagsResponseBody)
 	var turbotTagsMap []map[string]string
-	if tags.Body.Items.TagInfos != nil {
-		for _, i := range tags.Body.Items.TagInfos {
+	if tags.Items.TagInfos != nil {
+		for _, i := range tags.Items.TagInfos {
 			turbotTagsMap = append(turbotTagsMap, map[string]string{"Key": tea.StringValue(i.TagKey), "Value": tea.StringValue(i.TagValue)})
 		}
 	}
@@ -1010,12 +1006,12 @@ func rdsInstanceTagsSrc(_ context.Context, d *transform.TransformData) (interfac
 }
 
 func rdsInstanceTags(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	tags := d.Value.(*rds.DescribeTagsResponse)
+	tags := d.Value.(rds.DescribeTagsResponseBody)
 	var turbotTagsMap map[string]string
 
-	if tags.Body.Items.TagInfos != nil {
+	if tags.Items.TagInfos != nil {
 		turbotTagsMap = map[string]string{}
-		for _, i := range tags.Body.Items.TagInfos {
+		for _, i := range tags.Items.TagInfos {
 			turbotTagsMap[tea.StringValue(i.TagKey)] = tea.StringValue(i.TagValue)
 		}
 	}

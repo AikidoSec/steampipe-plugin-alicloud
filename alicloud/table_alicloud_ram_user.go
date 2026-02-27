@@ -370,7 +370,7 @@ func getRAMUserPolicies(ctx context.Context, d *plugin.QueryData, h *plugin.Hydr
 		return nil, err
 	}
 
-	return response.Body, nil
+	return *response.Body, nil
 }
 
 func getRAMUserMfaDevices(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {

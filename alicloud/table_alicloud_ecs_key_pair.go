@@ -148,16 +148,16 @@ func getEcsKeypair(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 		return nil, err
 	}
 
-	var name string
+	var name *string
 	if h.Item != nil {
 		keypair := h.Item.(ecs.DescribeKeyPairsResponseBodyKeyPairsKeyPair)
-		name = *keypair.KeyPairName
+		name = keypair.KeyPairName
 	} else {
-		name = d.EqualsQuals["name"].GetStringValue()
+		name = tea.String(d.EqualsQuals["name"].GetStringValue())
 	}
 
 	request := &ecs.DescribeKeyPairsRequest{
-		KeyPairName: &name,
+		KeyPairName: name,
 	}
 
 	response, err := client.DescribeKeyPairs(request)

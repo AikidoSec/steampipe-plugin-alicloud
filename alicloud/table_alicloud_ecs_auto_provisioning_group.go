@@ -191,7 +191,7 @@ func listEcsAutosProvisioningGroups(ctx context.Context, d *plugin.QueryData, h 
 			return nil, err
 		}
 		for _, group := range response.Body.AutoProvisioningGroups.AutoProvisioningGroup {
-			d.StreamListItem(ctx, group)
+			d.StreamListItem(ctx, *group)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -234,7 +234,7 @@ func getEcsAutosProvisioningGroup(ctx context.Context, d *plugin.QueryData, h *p
 	}
 
 	if len(response.Body.AutoProvisioningGroups.AutoProvisioningGroup) > 0 {
-		return response.Body.AutoProvisioningGroups.AutoProvisioningGroup[0], nil
+		return *response.Body.AutoProvisioningGroups.AutoProvisioningGroup[0], nil
 	}
 
 	return nil, nil
@@ -242,7 +242,7 @@ func getEcsAutosProvisioningGroup(ctx context.Context, d *plugin.QueryData, h *p
 
 func getEcsAutosProvisioningGroupInstances(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsAutosProvisioningGroupInstances")
-	data := h.Item.(*ecs.DescribeAutoProvisioningGroupsResponseBodyAutoProvisioningGroupsAutoProvisioningGroup)
+	data := h.Item.(ecs.DescribeAutoProvisioningGroupsResponseBodyAutoProvisioningGroupsAutoProvisioningGroup)
 
 	// Create service connection
 	client, err := ECSService(ctx, d)
@@ -264,12 +264,12 @@ func getEcsAutosProvisioningGroupInstances(ctx context.Context, d *plugin.QueryD
 		return nil, err
 	}
 
-	return response.Body, nil
+	return *response.Body, nil
 }
 
 func getEcsAutosProvisioningGroupAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsAutosProvisioningGroupAka")
-	data := h.Item.(*ecs.DescribeAutoProvisioningGroupsResponseBodyAutoProvisioningGroupsAutoProvisioningGroup)
+	data := h.Item.(ecs.DescribeAutoProvisioningGroupsResponseBodyAutoProvisioningGroupsAutoProvisioningGroup)
 
 	// Get project details
 	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()
@@ -288,7 +288,7 @@ func getEcsAutosProvisioningGroupAka(ctx context.Context, d *plugin.QueryData, h
 //// TRANSFORM FUNCTIONS
 
 func ecsAutosProvisioningGroupTitle(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	data := d.HydrateItem.(*ecs.DescribeAutoProvisioningGroupsResponseBodyAutoProvisioningGroupsAutoProvisioningGroup)
+	data := d.HydrateItem.(ecs.DescribeAutoProvisioningGroupsResponseBodyAutoProvisioningGroupsAutoProvisioningGroup)
 
 	// Build resource title
 	title := tea.StringValue(data.AutoProvisioningGroupId)

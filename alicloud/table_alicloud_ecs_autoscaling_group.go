@@ -329,7 +329,7 @@ func listEcsAutoscalingGroup(ctx context.Context, d *plugin.QueryData, h *plugin
 		}
 		for _, group := range response.Body.ScalingGroups {
 			plugin.Logger(ctx).Warn("listEcsAutoscalingGroup", "item", group)
-			d.StreamListItem(ctx, group)
+			d.StreamListItem(ctx, *group)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -378,7 +378,7 @@ func getEcsAutoscalingGroup(ctx context.Context, d *plugin.QueryData, h *plugin.
 	}
 
 	if len(response.Body.ScalingGroups) > 0 {
-		return response.Body.ScalingGroups[0], nil
+		return *response.Body.ScalingGroups[0], nil
 	}
 
 	return nil, nil
@@ -386,7 +386,7 @@ func getEcsAutoscalingGroup(ctx context.Context, d *plugin.QueryData, h *plugin.
 
 func getEcsAutoscalingGroupConfigurations(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsAutoscalingGroupConfigurations")
-	data := h.Item.(*ess.DescribeScalingGroupsResponseBodyScalingGroups)
+	data := h.Item.(ess.DescribeScalingGroupsResponseBodyScalingGroups)
 
 	// Create service connection
 	client, err := AutoscalingService(ctx, d)
@@ -417,7 +417,7 @@ func getEcsAutoscalingGroupConfigurations(ctx context.Context, d *plugin.QueryDa
 
 func getEcsAutoscalingGroupScalingInstances(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsAutoscalingGroupScalingInstances")
-	data := h.Item.(*ess.DescribeScalingGroupsResponseBodyScalingGroups)
+	data := h.Item.(ess.DescribeScalingGroupsResponseBodyScalingGroups)
 
 	// Create service connection
 	client, err := AutoscalingService(ctx, d)
@@ -448,7 +448,7 @@ func getEcsAutoscalingGroupScalingInstances(ctx context.Context, d *plugin.Query
 
 func getEcsAutoscalingGroupTags(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getEcsAutoscalingGroupTags")
-	data := h.Item.(*ess.DescribeScalingGroupsResponseBodyScalingGroups)
+	data := h.Item.(ess.DescribeScalingGroupsResponseBodyScalingGroups)
 
 	// Create service connection
 	client, err := AutoscalingService(ctx, d)
@@ -471,7 +471,7 @@ func getEcsAutoscalingGroupTags(ctx context.Context, d *plugin.QueryData, h *plu
 		return nil, err
 	}
 
-	return response.Body, nil
+	return *response.Body, nil
 }
 
 func getEcsAutoscalingGroupAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {

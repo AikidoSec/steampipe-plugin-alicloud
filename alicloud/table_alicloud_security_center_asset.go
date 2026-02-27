@@ -222,7 +222,7 @@ func listSecurityCenterAssets(ctx context.Context, d *plugin.QueryData, h *plugi
 			}
 
 			instanceCopy := instance
-			d.StreamListItem(ctx, &instanceCopy)
+			d.StreamListItem(ctx, *instanceCopy)
 			count++
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
@@ -246,7 +246,7 @@ func listSecurityCenterAssets(ctx context.Context, d *plugin.QueryData, h *plugi
 func getSecurityCenterAssetAkas(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("getSecurityCenterAssetAkas")
 
-	data := h.Item.(*sas.DescribeCloudCenterInstancesResponseBodyInstances)
+	data := h.Item.(sas.DescribeCloudCenterInstancesResponseBodyInstances)
 	region := d.EqualsQualString(matrixKeyRegion)
 
 	getCommonColumnsCached := plugin.HydrateFunc(getCommonColumns).WithCache()

@@ -220,7 +220,7 @@ func getVpcDhcpOptionsSet(ctx context.Context, d *plugin.QueryData, h *plugin.Hy
 		return nil, nil
 	}
 	if tea.StringValue(response.Body.DhcpOptionsSetId) != "" {
-		return response, nil
+		return *response.Body, nil
 	}
 
 	return nil, nil
@@ -233,8 +233,8 @@ func getVpcDhcpOptionSetAka(ctx context.Context, d *plugin.QueryData, h *plugin.
 	region = d.EqualsQualString(matrixKeyRegion)
 
 	switch item := h.Item.(type) {
-	case *vpc.GetDhcpOptionsSetResponse:
-		id = *item.Body.DhcpOptionsSetId
+	case vpc.GetDhcpOptionsSetResponseBody:
+		id = *item.DhcpOptionsSetId
 	case vpc.ListDhcpOptionsSetsResponseBodyDhcpOptionsSets:
 		id = *item.DhcpOptionsSetId
 	}

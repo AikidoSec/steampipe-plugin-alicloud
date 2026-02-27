@@ -249,7 +249,7 @@ func networkAclData(item interface{}) map[string]string {
 	case vpc.DescribeNetworkAclsResponseBodyNetworkAclsNetworkAcl:
 		data["ID"] = tea.StringValue(item.NetworkAclId)
 		data["Name"] = tea.StringValue(item.NetworkAclName)
-	case *vpc.DescribeNetworkAclAttributesResponseBodyNetworkAclAttribute:
+	case vpc.DescribeNetworkAclAttributesResponseBodyNetworkAclAttribute:
 		data["ID"] = tea.StringValue(item.NetworkAclId)
 		data["Name"] = tea.StringValue(item.NetworkAclName)
 	}

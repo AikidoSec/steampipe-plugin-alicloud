@@ -238,7 +238,7 @@ func listAlidnsDomains(ctx context.Context, d *plugin.QueryData, h *plugin.Hydra
 		}
 
 		for _, domain := range response.Body.Domains.Domain {
-			d.StreamListItem(ctx, domain)
+			d.StreamListItem(ctx, *domain)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -263,7 +263,7 @@ func getAlidnsDomain(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrate
 	domainName := d.EqualsQualString("domain_name")
 
 	if domainName == "" {
-		domain := h.Item.(*alidns.DescribeDomainsResponseBodyDomainsDomain)
+		domain := h.Item.(alidns.DescribeDomainsResponseBodyDomainsDomain)
 		domainName = *domain.DomainName
 	}
 
@@ -284,7 +284,7 @@ func getAlidnsDomain(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrate
 		return nil, err
 	}
 
-	return response, nil
+	return *response.Body, nil
 }
 
 func domainToAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -303,7 +303,7 @@ func domainToAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData
 	switch item := h.Item.(type) {
 	case alidns.DescribeDomainInfoResponseBody:
 		domainName = *item.DomainName
-	case *alidns.DescribeDomainsResponseBodyDomainsDomain:
+	case alidns.DescribeDomainsResponseBodyDomainsDomain:
 		domainName = *item.DomainName
 	}
 

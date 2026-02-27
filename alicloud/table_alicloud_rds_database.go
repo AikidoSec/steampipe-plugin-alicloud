@@ -114,7 +114,7 @@ func tableAlicloudRdsDatabase(ctx context.Context) *plugin.Table {
 
 func listRdsdatabases(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	region := d.EqualsQualString(matrixKeyRegion)
-	dbInstance := h.Item.(rds.DescribeDatabasesResponseBodyDatabasesDatabase)
+	dbInstance := h.Item.(rds.DescribeDBInstancesResponseBodyItemsDBInstance)
 	if d.EqualsQualString("db_instance_id") != "" {
 		if d.EqualsQualString("db_instance_id") != tea.StringValue(dbInstance.DBInstanceId) {
 			return nil, nil

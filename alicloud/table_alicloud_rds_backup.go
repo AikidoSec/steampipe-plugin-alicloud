@@ -263,7 +263,7 @@ func listRdsBackups(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateD
 			return nil, err
 		}
 		for _, i := range response.Body.Items.Backup {
-			d.StreamListItem(ctx, i)
+			d.StreamListItem(ctx, *i)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {

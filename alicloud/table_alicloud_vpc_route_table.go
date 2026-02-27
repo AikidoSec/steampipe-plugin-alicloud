@@ -239,7 +239,7 @@ func getVpcRouteTableEntryList(ctx context.Context, d *plugin.QueryData, h *plug
 		logQueryError(ctx, d, h, "alicloud_vpc_route_table.getVpcRouteTableEntryList", err, "request", request)
 		return nil, err
 	}
-	return response, nil
+	return *response.Body, nil
 }
 
 func getVpcRouteTableAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {

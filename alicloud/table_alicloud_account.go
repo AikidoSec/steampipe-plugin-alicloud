@@ -3,6 +3,7 @@ package alicloud
 import (
 	"context"
 
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
@@ -70,7 +71,7 @@ func listAccountAlias(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrat
 	if err != nil {
 		return nil, err
 	}
-	d.StreamListItem(ctx, response)
+	d.StreamListItem(ctx, tea.StringValue(response.Body.AccountAlias))
 
 	return nil, nil
 }

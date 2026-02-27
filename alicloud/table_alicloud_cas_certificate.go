@@ -241,7 +241,7 @@ func getUserCertificate(ctx context.Context, d *plugin.QueryData, h *plugin.Hydr
 		return nil, err
 	}
 
-	return response, nil
+	return *response.Body, nil
 }
 
 func getUserCertificateAka(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {

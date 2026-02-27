@@ -228,7 +228,7 @@ func getRAMPolicy(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDat
 	}
 
 	if response != nil && len(tea.StringValue(response.Body.Policy.PolicyName)) > 0 {
-		return response, nil
+		return *response.Body, nil
 	}
 
 	return nil, nil
@@ -254,8 +254,8 @@ func policyName(item interface{}) string {
 	switch item := item.(type) {
 	case ram.ListPoliciesResponseBodyPoliciesPolicy:
 		return *item.PolicyName
-	case *ram.GetPolicyResponse:
-		return *item.Body.Policy.PolicyName
+	case ram.GetPolicyResponseBody:
+		return *item.Policy.PolicyName
 	}
 	return ""
 }

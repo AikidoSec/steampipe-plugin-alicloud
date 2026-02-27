@@ -285,7 +285,7 @@ func listVpcs(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (
 			return nil, err
 		}
 		for _, i := range response.Body.Vpcs.Vpc {
-			d.StreamListItem(ctx, i)
+			d.StreamListItem(ctx, *i)
 			// This will return zero if context has been cancelled (i.e due to manual cancellation) or
 			// if there is a limit, it will return the number of rows required to reach this limit
 			if d.RowsRemaining(ctx) == 0 {
@@ -310,7 +310,7 @@ func getVpcAttributes(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrat
 		plugin.Logger(ctx).Error("getVpcAttributes", "connection_error", err)
 		return nil, err
 	}
-	i := h.Item.(*vpc.DescribeVpcsResponseBodyVpcsVpc)
+	i := h.Item.(vpc.DescribeVpcsResponseBodyVpcsVpc)
 	request := &vpc.DescribeVpcAttributeRequest{
 		VpcId: i.VpcId,
 	}
@@ -343,12 +343,12 @@ func getVpcAttributes(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrat
 //// TRANSFORM FUNCTIONS
 
 func vpcArn(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	i := d.HydrateItem.(*vpc.DescribeVpcsResponseBodyVpcsVpc)
+	i := d.HydrateItem.(vpc.DescribeVpcsResponseBodyVpcsVpc)
 	return "acs:vpc:" + tea.StringValue(i.RegionId) + ":" + strconv.FormatInt(tea.Int64Value(i.OwnerId), 10) + ":vpc/" + tea.StringValue(i.VpcId), nil
 }
 
 func vpcTitle(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	i := d.HydrateItem.(*vpc.DescribeVpcsResponseBodyVpcsVpc)
+	i := d.HydrateItem.(vpc.DescribeVpcsResponseBodyVpcsVpc)
 
 	// Build resource title
 	title := tea.StringValue(i.VpcId)

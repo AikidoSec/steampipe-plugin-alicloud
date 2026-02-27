@@ -248,7 +248,7 @@ func getRAMGroupPolicies(ctx context.Context, d *plugin.QueryData, h *plugin.Hyd
 		return nil, serverErr
 	}
 
-	return response, nil
+	return *response.Body, nil
 }
 
 func getGroupArn(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {

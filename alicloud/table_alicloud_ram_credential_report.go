@@ -3,9 +3,13 @@ package alicloud
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
+	"time"
 
 	ims "github.com/alibabacloud-go/ims-20190815/v4/client"
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/gocarina/gocsv"
+	"github.com/sethvargo/go-retry"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
@@ -248,10 +252,41 @@ func listRAMCredentialReports(ctx context.Context, d *plugin.QueryData, h *plugi
 		return nil, err
 	}
 
-	response, err := client.GetCredentialReport(&ims.GetCredentialReportRequest{})
+	var response *ims.GetCredentialReportResponse
+	req := &ims.GetCredentialReportRequest{}
+	response, err = client.GetCredentialReport(req)
 	if err != nil {
-		logQueryError(ctx, d, h, "alicloud_ram_credential_report.listRAMCredentialReports", err)
-		return nil, err
+		if sdkErr, ok := err.(*tea.SDKError); ok &&
+			(tea.StringValue(sdkErr.Code) == "Expired.CredentialReport" ||
+				tea.StringValue(sdkErr.Code) == "EntityNotExist.Report" ||
+				tea.StringValue(sdkErr.Code) == "ReportNotGenerated") {
+			plugin.Logger(ctx).Debug("credential report expired or missing. generating a new one...")
+
+			// Trigger generation
+			_, genErr := client.GenerateCredentialReport()
+			if genErr != nil {
+				return nil, fmt.Errorf("failed to trigger new credential report: %w", genErr)
+			}
+
+			// Poll the API until the new report is ready (up to ~55 seconds)
+			b := retry.NewFibonacci(1 * time.Second)
+			err = retry.Do(ctx, retry.WithMaxRetries(10, b), func(ctx context.Context) error {
+				var retryErr error
+				response, retryErr = client.GetCredentialReport(req)
+				if retryErr != nil {
+					// Tell go-retry to back off and try again
+					return retry.RetryableError(retryErr)
+				}
+				return nil
+			})
+			if err != nil {
+				return nil, fmt.Errorf("timed out waiting for credential report generation: %w", err)
+			}
+		} else {
+			// If it's a real API error (like 403 Forbidden), let Steampipe handle it (No manual logger!)
+			logQueryError(ctx, d, h, "alicloud_ram_credential_report.listRAMCredentialReports", err)
+			return nil, err
+		}
 	}
 
 	// The report is Base64-encoded. After decoding the report, the credential report is in the CSV format.

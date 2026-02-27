@@ -191,7 +191,7 @@ func listKmsSecret(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 			return nil, err
 		}
 		for _, i := range response.Body.SecretList.Secret {
-			d.StreamListItem(ctx, &kms.ListSecretsResponseBodySecretListSecret{
+			d.StreamListItem(ctx, kms.ListSecretsResponseBodySecretListSecret{
 				CreateTime:        i.CreateTime,
 				PlannedDeleteTime: i.PlannedDeleteTime,
 				SecretName:        i.SecretName,
@@ -231,8 +231,8 @@ func getKmsSecret(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDat
 	var name *string
 	var response *kms.DescribeSecretResponse
 	if h.Item != nil {
-		data := h.Item.(*kms.DescribeSecretResponse)
-		name = data.Body.SecretName
+		data := h.Item.(kms.ListSecretsResponseBodySecretListSecret)
+		name = data.SecretName
 	} else {
 		name = tea.String(d.EqualsQuals["name"].GetStringValue())
 	}
@@ -263,7 +263,7 @@ func getKmsSecret(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDat
 		return nil, err
 	}
 
-	return response, nil
+	return *response.Body, nil
 }
 
 func listKmsSecretVersionIds(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -275,11 +275,11 @@ func listKmsSecretVersionIds(ctx context.Context, d *plugin.QueryData, h *plugin
 		plugin.Logger(ctx).Error("alicloud_kms_secret.getKmsSecret", "connection_error", err)
 		return nil, err
 	}
-	secretData := h.Item.(*kms.DescribeSecretResponse)
+	secretData := h.Item.(kms.DescribeSecretResponseBody)
 	var response *kms.ListSecretVersionIdsResponse
 
 	request := &kms.ListSecretVersionIdsRequest{
-		SecretName:        secretData.Body.SecretName,
+		SecretName:        secretData.SecretName,
 		IncludeDeprecated: tea.String("true"),
 	}
 
@@ -305,7 +305,7 @@ func listKmsSecretVersionIds(ctx context.Context, d *plugin.QueryData, h *plugin
 	}
 
 	if len(response.Body.VersionIds.VersionId) > 0 {
-		return response.Body.VersionIds, nil
+		return *response.Body.VersionIds, nil
 	}
 
 	return nil, nil
@@ -314,7 +314,7 @@ func listKmsSecretVersionIds(ctx context.Context, d *plugin.QueryData, h *plugin
 //// TRANSFORM FUNCTIONS
 
 func fetchRegionFromArn(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	data := d.HydrateItem.(*kms.DescribeSecretResponseBody)
+	data := d.HydrateItem.(kms.DescribeSecretResponseBody)
 
 	resourceArn := data.Arn
 	region := strings.Split(tea.StringValue(resourceArn), ":")[2]

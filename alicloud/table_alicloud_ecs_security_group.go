@@ -253,7 +253,7 @@ func getSecurityGroupAttribute(ctx context.Context, d *plugin.QueryData, h *plug
 		logQueryError(ctx, d, h, "alicloud_ecs_security_group.getVSecurityGroupAttribute", err, "request", request)
 		return nil, err
 	}
-	return response, nil
+	return *response.Body, nil
 }
 
 func getEcsSecurityGroupARN(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
