@@ -42,6 +42,10 @@ func tableAlicloudOssBucket(ctx context.Context) *plugin.Table {
 				Func: getBucketPolicy,
 				Tags: map[string]string{"service": "oss", "action": "GetBucketPolicy"},
 			},
+			{
+				Func: getBucketPublicAccessBlock,
+				Tags: map[string]string{"service": "oss", "action": "GetBucketPublicAccessBlock"},
+			},
 		},
 		Columns: []*plugin.Column{
 			{
@@ -118,6 +122,13 @@ func tableAlicloudOssBucket(ctx context.Context) *plugin.Table {
 				Hydrate:     getBucketPolicy,
 				Transform:   transform.FromValue().Transform(transform.UnmarshalYAML),
 				Description: "Allows you to grant permissions on OSS resources to RAM users from your Alibaba Cloud and other Alibaba Cloud accounts. You can also control access based on the request source.",
+			},
+			{
+				Name:        "block_public_access",
+				Type:        proto.ColumnType_BOOL,
+				Hydrate:     getBucketPublicAccessBlock,
+				Transform:   transform.FromField("PublicAccessBlockConfiguration.BlockPublicAccess"),
+				Description: "Indicates whether Block Public Access is enabled for the bucket. Null if not configured.",
 			},
 			{
 				Name:        "tags_src",
@@ -266,6 +277,31 @@ func getBucketLogging(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrat
 	// Get bucket encryption
 	response, err := client.GetBucketLogging(ctx, param)
 	if err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
+func getBucketPublicAccessBlock(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
+	logger := plugin.Logger(ctx)
+	bucket := h.Item.(oss.BucketProperties)
+	client, err := OssService(ctx, d, removeSuffixFromLocation(*bucket.Location))
+	if err != nil {
+		logger.Error("getBucketPublicAccessBlock", "connection_error", err)
+		return nil, err
+	}
+
+	param := &oss.GetBucketPublicAccessBlockRequest{
+		Bucket: bucket.Name,
+	}
+	response, err := client.GetBucketPublicAccessBlock(ctx, param)
+	if err != nil {
+		if a, ok := err.(*oss.ServiceError); ok {
+			if a.Code == "NoSuchPublicAccessBlockConfiguration" {
+				logger.Debug("getBucketPublicAccessBlock", "query_error", a, "bucket", bucket.Name)
+				return nil, nil
+			}
+		}
 		return nil, err
 	}
 	return response, nil
