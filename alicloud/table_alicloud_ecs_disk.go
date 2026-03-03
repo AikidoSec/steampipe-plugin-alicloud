@@ -362,10 +362,6 @@ func listEcsDisk(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData
 	limit := d.QueryContext.Limit
 	if d.QueryContext.Limit != nil {
 		maxResults := int64(tea.Int32Value(request.MaxResults))
-		if err != nil {
-			plugin.Logger(ctx).Error("alicloud_ecs_disk.listEcsDisk", "max_results_error", err)
-			return nil, err
-		}
 		if *limit < maxResults {
 			request.MaxResults = tea.Int32(int32(*limit))
 		}
