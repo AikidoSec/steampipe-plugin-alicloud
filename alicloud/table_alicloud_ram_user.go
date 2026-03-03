@@ -59,8 +59,8 @@ func tableAlicloudRAMUser(ctx context.Context) *plugin.Table {
 				Tags: map[string]string{"service": "ram", "action": "ListGroupsForUser"},
 			},
 			{
-				Func: getRAMUserPasskeys,
-				Tags: map[string]string{"service": "ims", "action": "getRAMUserPasskeys"},
+				Func:    getRAMUserPasskeys,
+				Tags:    map[string]string{"service": "ims", "action": "getRAMUserPasskeys"},
 				Depends: []plugin.HydrateFunc{getRAMUserMfaDevices},
 			},
 		},
@@ -287,7 +287,6 @@ func getRAMUser(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData)
 		}
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +364,6 @@ func getRAMUserPolicies(ctx context.Context, d *plugin.QueryData, h *plugin.Hydr
 		}
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -393,7 +391,7 @@ func getRAMUserMfaDevices(ctx context.Context, d *plugin.QueryData, h *plugin.Hy
 		return nil, err
 	}
 
-	var items []*ram.ListVirtualMFADevicesResponseBodyVirtualMFADevicesVirtualMFADevice
+	items := make([]*ram.ListVirtualMFADevicesResponseBodyVirtualMFADevicesVirtualMFADevice, 0)
 	for _, i := range response.Body.VirtualMFADevices.VirtualMFADevice {
 		if i.User != nil && tea.StringValue(i.User.UserName) == data.UserName {
 			items = append(items, i)
@@ -432,6 +430,10 @@ func getRAMUserPasskeys(ctx context.Context, d *plugin.QueryData, h *plugin.Hydr
 			return nil, serverErr
 		}
 		return nil, err
+	}
+
+	if response.Body == nil || response.Body.Passkeys == nil {
+		return make([]*ims.ListPasskeysResponseBodyPasskeys, 0), nil
 	}
 
 	return response.Body.Passkeys, nil
@@ -477,12 +479,21 @@ func getCsUserPermissions(ctx context.Context, d *plugin.QueryData, h *plugin.Hy
 //// TRANSFORM FUNCTION
 
 func userMfaStatus(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	passkeys := d.HydrateResults["getRAMUserPasskeys"].([]*ims.ListPasskeysResponseBodyPasskeys)
-	mfaDevices := d.HydrateResults["getRAMUserMfaDevices"].([]*ram.ListVirtualMFADevicesResponseBodyVirtualMFADevicesVirtualMFADevice)
-
-	if len(passkeys) > 0 || len(mfaDevices) > 0 {
-		return true, nil
+	var passkeyCount int
+	if res, ok := d.HydrateResults["getRAMUserPasskeys"]; ok && res != nil {
+		if passkeys, ok := res.([]*ims.ListPasskeysResponseBodyPasskeys); ok {
+			passkeyCount = len(passkeys)
+		}
 	}
 
-	return false, nil
+	// 2. Safely retrieve MFA devices
+	var mfaDeviceCount int
+	if res, ok := d.HydrateResults["getRAMUserMfaDevices"]; ok && res != nil {
+		if mfaDevices, ok := res.([]*ram.ListVirtualMFADevicesResponseBodyVirtualMFADevicesVirtualMFADevice); ok {
+			mfaDeviceCount = len(mfaDevices)
+		}
+	}
+
+	// If either has records, MFA is enabled
+	return (passkeyCount > 0 || mfaDeviceCount > 0), nil
 }
