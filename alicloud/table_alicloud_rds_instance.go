@@ -981,7 +981,7 @@ func getRdsInstanceSecurityGroupConfiguration(ctx context.Context, d *plugin.Que
 //// TRANSFORM FUNCTIONS
 
 func getSecurityIps(_ context.Context, d *transform.TransformData) (interface{}, error) {
-	IpArray := d.Value.([]rds.DescribeDBInstanceIPArrayListResponseBodyItemsDBInstanceIPArray)
+	IpArray := d.Value.([]*rds.DescribeDBInstanceIPArrayListResponseBodyItemsDBInstanceIPArray)
 
 	if len(IpArray) == 0 {
 		return nil, nil
