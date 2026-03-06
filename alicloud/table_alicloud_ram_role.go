@@ -98,7 +98,7 @@ func tableAlicloudRAMRole(ctx context.Context) *plugin.Table {
 				Description: "A list of policies attached to a RAM role.",
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     getRAMRolePolicies,
-				Transform:   transform.FromField("Policies.Policy"),
+				Transform:   transform.FromField("Body.Policies.Policy"),
 			},
 
 			// steampipe standard columns

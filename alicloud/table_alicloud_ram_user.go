@@ -139,7 +139,7 @@ func tableAlicloudRAMUser(ctx context.Context) *plugin.Table {
 				Description: "A list of policies attached to a RAM user.",
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     getRAMUserPolicies,
-				Transform:   transform.FromField("Policies.Policy"),
+				Transform:   transform.FromField("Body.Policies.Policy"),
 			},
 			{
 				Name:        "cs_user_permissions",
