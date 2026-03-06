@@ -81,7 +81,7 @@ func tableAlicloudRAMGroup(ctx context.Context) *plugin.Table {
 				Description: "A list of policies attached to a RAM user group.",
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     getRAMGroupPolicies,
-				Transform:   transform.FromField("Policies.Policy"),
+				Transform:   transform.FromField("Body.Policies.Policy"),
 			},
 			{
 				Name:        "users",
