@@ -256,10 +256,7 @@ func listRAMCredentialReports(ctx context.Context, d *plugin.QueryData, h *plugi
 	req := &ims.GetCredentialReportRequest{}
 	response, err = client.GetCredentialReport(req)
 	if err != nil {
-		if sdkErr, ok := err.(*tea.SDKError); ok &&
-			(tea.StringValue(sdkErr.Code) == "Expired.CredentialReport" ||
-				tea.StringValue(sdkErr.Code) == "EntityNotExist.Report" ||
-				tea.StringValue(sdkErr.Code) == "ReportNotGenerated") {
+		if sdkErr, ok := err.(*tea.SDKError); ok && sdkErr.StatusCode != nil && *sdkErr.StatusCode == 404 {
 			plugin.Logger(ctx).Debug("credential report expired or missing. generating a new one...")
 
 			// Trigger generation
