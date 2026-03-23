@@ -479,7 +479,7 @@ func getEcsDiskARN(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	arn := "arn:acs:ecs:" + tea.StringValue(disk.RegionId) + ":" + accountID + ":disk/" + tea.StringValue(disk.DiskId)
+	arn := "acs:ecs:" + tea.StringValue(disk.RegionId) + ":" + accountID + ":disk/" + tea.StringValue(disk.DiskId)
 
 	return arn, nil
 }

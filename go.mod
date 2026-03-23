@@ -13,6 +13,7 @@ require (
 	github.com/alibabacloud-go/darabonba-openapi/v2 v2.1.15
 	github.com/alibabacloud-go/ecs-20140526/v7 v7.6.0
 	github.com/alibabacloud-go/ess-20220222/v2 v2.12.2
+	github.com/alibabacloud-go/fc-20230330/v2 v2.0.0
 	github.com/alibabacloud-go/ims-20190815/v4 v4.3.4
 	github.com/alibabacloud-go/kms-20160120/v3 v3.4.0
 	github.com/alibabacloud-go/ram-20150501/v2 v2.2.0
@@ -47,7 +48,8 @@ require (
 	github.com/alibabacloud-go/darabonba-string v1.0.2 // indirect
 	github.com/alibabacloud-go/debug v1.0.1 // indirect
 	github.com/alibabacloud-go/endpoint-util v1.1.0 // indirect
-	github.com/alibabacloud-go/openapi-util v0.1.1 // indirect
+	github.com/alibabacloud-go/openapi-util v0.1.2 // indirect
+	github.com/alibabacloud-go/sae-20190506/v2 v2.0.1 // indirect
 	github.com/alibabacloud-go/tea-utils/v2 v2.0.9 // indirect
 	github.com/allegro/bigcache/v3 v3.1.0 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect

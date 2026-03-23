@@ -173,7 +173,6 @@ func listUserCertificate(ctx context.Context, d *plugin.QueryData, h *plugin.Hyd
 		ShowSize:    tea.Int64(50),
 		CurrentPage: tea.Int64(1),
 	}
-	// request.QueryParams["RegionId"] = region
 
 	count := 0
 	for {
