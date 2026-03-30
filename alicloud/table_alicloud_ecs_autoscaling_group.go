@@ -487,7 +487,7 @@ func getEcsAutoscalingGroupAka(ctx context.Context, d *plugin.QueryData, h *plug
 	commonColumnData := commonData.(*alicloudCommonColumnData)
 	accountID := commonColumnData.AccountID
 
-	akas := []string{"arn:acs:ess:" + tea.StringValue(data.RegionId) + ":" + accountID + ":scalinggroup/" + tea.StringValue(data.ScalingGroupId)}
+	akas := []string{"acs:ess:" + tea.StringValue(data.RegionId) + ":" + accountID + ":scalinggroup/" + tea.StringValue(data.ScalingGroupId)}
 
 	return akas, nil
 }

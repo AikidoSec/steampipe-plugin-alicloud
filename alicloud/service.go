@@ -7,6 +7,7 @@ import (
 
 	openapi "github.com/alibabacloud-go/darabonba-openapi/v2/utils"
 	"github.com/alibabacloud-go/tea/dara"
+	"github.com/alibabacloud-go/tea/tea"
 
 	actiontrail "github.com/alibabacloud-go/actiontrail-20200706/v3/client"
 	alidns "github.com/alibabacloud-go/alidns-20150109/v5/client"
@@ -15,10 +16,12 @@ import (
 	cs "github.com/alibabacloud-go/cs-20151215/v7/client"
 	ecs "github.com/alibabacloud-go/ecs-20140526/v7/client"
 	ess "github.com/alibabacloud-go/ess-20220222/v2/client"
+	fc "github.com/alibabacloud-go/fc-20230330/v2/client"
 	ims "github.com/alibabacloud-go/ims-20190815/v4/client"
 	kms "github.com/alibabacloud-go/kms-20160120/v3/client"
 	ram "github.com/alibabacloud-go/ram-20150501/v2/client"
 	rds "github.com/alibabacloud-go/rds-20140815/v16/client"
+	sae "github.com/alibabacloud-go/sae-20190506/v2/client"
 	sas "github.com/alibabacloud-go/sas-20181203/v8/client"
 	slb "github.com/alibabacloud-go/slb-20140515/v4/client"
 	sts "github.com/alibabacloud-go/sts-20150401/v2/client"
@@ -557,6 +560,75 @@ func SLSService(ctx context.Context, d *plugin.QueryData, region string) (sls.Cl
 
 	d.ConnectionManager.Cache.Set(serviceCacheKey, client)
 	return client, nil
+}
+
+func FCService(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (*fc.Client, error) {
+	region := d.EqualsQualString(matrixKeyRegion)
+
+	if region == "" {
+		region = GetDefaultRegion(d.Connection)
+	}
+
+	if region == "" {
+		return nil, fmt.Errorf("region could not be determined for FcService")
+	}
+
+	serviceCacheKey := fmt.Sprintf("fc-%s", region)
+	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
+		return cachedData.(*fc.Client), nil
+	}
+
+	credCfg, err := getCredentialSessionCached(ctx, d, nil)
+	if err != nil {
+		return nil, err
+	}
+	cfg := credCfg.(*CredentialConfig)
+
+	svc, err := fc.NewClient(&openapi.Config{
+		Credential: cfg.Cred,
+		RegionId:   &region,
+		Endpoint:   tea.String(fmt.Sprintf("fcv3.%s.aliyuncs.com", region)),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
+	return svc, nil
+}
+
+func SAEService(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (*sae.Client, error) {
+	region := d.EqualsQualString(matrixKeyRegion)
+
+	if region == "" {
+		region = GetDefaultRegion(d.Connection)
+	}
+
+	if region == "" {
+		return nil, fmt.Errorf("region could not be determined for SAEService")
+	}
+
+	serviceCacheKey := fmt.Sprintf("sae-%s", region)
+	if cachedData, ok := d.ConnectionManager.Cache.Get(serviceCacheKey); ok {
+		return cachedData.(*sae.Client), nil
+	}
+
+	credCfg, err := getCredentialSessionCached(ctx, d, nil)
+	if err != nil {
+		return nil, err
+	}
+	cfg := credCfg.(*CredentialConfig)
+
+	svc, err := sae.NewClient(&openapi.Config{
+		Credential: cfg.Cred,
+		RegionId:   &region,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	d.ConnectionManager.Cache.Set(serviceCacheKey, svc)
+	return svc, nil
 }
 
 // GetDefaultRegion returns the default region used
