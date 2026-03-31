@@ -35,6 +35,69 @@ func BuildRegionList(_ context.Context, d *plugin.QueryData) []map[string]interf
 	}
 }
 
+func BuildFunctionComputeRegionList(ctx context.Context, d *plugin.QueryData) []map[string]interface{} {
+	fcRegions := []string{
+		"cn-beijing",
+		"cn-chengdu",
+		"cn-hangzhou",
+		"cn-hongkong",
+		"cn-huhehaote",
+		"cn-qingdao",
+		"cn-shanghai",
+		"cn-shanghai-finance-1",
+		"cn-shenzhen",
+		"cn-wulanchabu",
+		"cn-zhangjiakou",
+		"ap-northeast-1",
+		"ap-northeast-2",
+		"ap-southeast-1",
+		"ap-southeast-3",
+		"ap-southeast-5",
+		"ap-southeast-7",
+		"eu-central-1",
+		"eu-west-1",
+		"me-central-1",
+		"us-east-1",
+		"us-west-1",
+	}
+	regions := BuildRegionList(ctx, d)
+	intersect := make([]map[string]interface{}, 0, len(regions))
+
+	for _, mp := range regions {
+		region, ok := mp["region"].(string)
+		if !ok || !slices.Contains(fcRegions, region) {
+			continue
+		}
+		intersect = append(intersect, mp)
+	}
+
+	return intersect
+}
+
+func BuildSAERegionList(ctx context.Context, d *plugin.QueryData) []map[string]interface{} {
+	saeRegions := []string{
+		"cn-beijing",
+		"cn-hongkong",
+		"cn-shanghai",
+		"ap-northeast-1",
+		"ap-southeast-1",
+		"ap-southeast-5",
+		"eu-central-1",
+	}
+	regions := BuildRegionList(ctx, d)
+	intersect := make([]map[string]interface{}, 0, len(regions))
+
+	for _, mp := range regions {
+		region, ok := mp["region"].(string)
+		if !ok || !slices.Contains(saeRegions, region) {
+			continue
+		}
+		intersect = append(intersect, mp)
+	}
+
+	return intersect
+}
+
 func getValidRegions() []string {
 	return []string{
 		"cn-beijing", "cn-beijing-finance-1", "cn-chengdu", "cn-guangzhou", "cn-hangzhou", "cn-heyuan", "cn-hongkong",
