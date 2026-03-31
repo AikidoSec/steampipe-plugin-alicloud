@@ -34,6 +34,7 @@ func tableAlicloudFcFunction(ctx context.Context) *plugin.Table {
 				Tags: map[string]string{"service": "fc", "action": "GetFunction"},
 			},
 		},
+		GetMatrixItemFunc: BuildFunctionComputeRegionList,
 		Columns: []*plugin.Column{
 			{
 				Name:        "name",

@@ -44,6 +44,7 @@ func tableAlicloudSaeApplication(ctx context.Context) *plugin.Table {
 				Depends: []plugin.HydrateFunc{describeApplicationConfig},
 			},
 		},
+		GetMatrixItemFunc: BuildSAERegionList,
 		Columns: []*plugin.Column{
 			{
 				Name:        "name",
