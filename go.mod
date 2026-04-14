@@ -1,8 +1,6 @@
 module github.com/turbot/steampipe-plugin-alicloud
 
-go 1.24
-
-toolchain go1.24.1
+go 1.26.2
 
 require (
 	github.com/alibabacloud-go/actiontrail-20200706/v3 v3.4.0
@@ -16,12 +14,15 @@ require (
 	github.com/alibabacloud-go/fc-20230330/v2 v2.0.0
 	github.com/alibabacloud-go/ims-20190815/v4 v4.3.4
 	github.com/alibabacloud-go/kms-20160120/v3 v3.4.0
+	github.com/alibabacloud-go/openapi-util v0.1.2
 	github.com/alibabacloud-go/ram-20150501/v2 v2.2.0
 	github.com/alibabacloud-go/rds-20140815/v16 v16.4.0
+	github.com/alibabacloud-go/sae-20190506/v2 v2.0.1
 	github.com/alibabacloud-go/sas-20181203/v8 v8.0.1
 	github.com/alibabacloud-go/slb-20140515/v4 v4.0.13
 	github.com/alibabacloud-go/sts-20150401/v2 v2.1.0
 	github.com/alibabacloud-go/tea v1.4.0
+	github.com/alibabacloud-go/tea-utils/v2 v2.0.9
 	github.com/alibabacloud-go/vpc-20160428/v7 v7.0.0
 	github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.2.0
 	github.com/aliyun/aliyun-log-go-sdk v0.1.111
@@ -48,9 +49,6 @@ require (
 	github.com/alibabacloud-go/darabonba-string v1.0.2 // indirect
 	github.com/alibabacloud-go/debug v1.0.1 // indirect
 	github.com/alibabacloud-go/endpoint-util v1.1.0 // indirect
-	github.com/alibabacloud-go/openapi-util v0.1.2 // indirect
-	github.com/alibabacloud-go/sae-20190506/v2 v2.0.1 // indirect
-	github.com/alibabacloud-go/tea-utils/v2 v2.0.9 // indirect
 	github.com/allegro/bigcache/v3 v3.1.0 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/aws/aws-sdk-go v1.44.183 // indirect
